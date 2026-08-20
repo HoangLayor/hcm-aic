@@ -17,8 +17,9 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 class QdrantManager:
-    def __init__(self, collection_name=None, vector_dim=None):
-        self.collection_name = collection_name if collection_name is not None else config.QDRANT_COLLECTION_NAME
+    def __init__(self, keyframe_collection=None, caption_collection=None, vector_dim=None):
+        self.kf_collection = keyframe_collection if keyframe_collection is not None else config.QDRANT_KEYFRAME_COLLECTION
+        self.cap_collection = caption_collection if caption_collection is not None else config.QDRANT_CAPTION_COLLECTION
         self.vector_dim = vector_dim if vector_dim is not None else config.VECTOR_DIM
         
         if hasattr(config, "QDRANT_URL") and config.QDRANT_URL:
@@ -36,19 +37,20 @@ class QdrantManager:
             logger.info(f"Connecting to Qdrant (Local Path: {db_path})...")
             self.client = QdrantClient(path=str(db_path))
         
-        # Initialize collection if it doesn't exist
-        self._init_collection()
+        # Initialize collections if they don't exist
+        self._init_collection(self.kf_collection)
+        self._init_collection(self.cap_collection)
 
-    def _init_collection(self):
-        if not self.client.collection_exists(collection_name=self.collection_name):
-            logger.info(f"Creating Collection '{self.collection_name}' with dim={self.vector_dim}...")
+    def _init_collection(self, collection_name):
+        if not self.client.collection_exists(collection_name=collection_name):
+            logger.info(f"Creating Collection '{collection_name}' with dim={self.vector_dim}...")
             self.client.create_collection(
-                collection_name=self.collection_name,
+                collection_name=collection_name,
                 vectors_config=VectorParams(size=self.vector_dim, distance=Distance.COSINE),
             )
-            logger.info("Collection created.")
+            logger.info(f"Collection '{collection_name}' created.")
         else:
-            logger.info(f"Collection '{self.collection_name}' already exists.")
+            logger.info(f"Collection '{collection_name}' already exists.")
 
     def upsert_video_embeddings(self, video_id: str):
         """Reads embeddings.pt and metadata from disk and upserts into Qdrant."""
@@ -59,7 +61,8 @@ class QdrantManager:
             logger.warning(f"No embeddings directory found for {video_id}.")
             return
             
-        points = []
+        kf_points = []
+        cap_points = []
         
         # 1. Upsert Keyframes
         kf_meta_file = embed_dir / "keyframe_metadata.json"
@@ -74,7 +77,7 @@ class QdrantManager:
                 for vec, meta in zip(vectors, metadata):
                     point_key = f"{video_id}_{meta.get('segment_id', '')}_kf_{meta.get('frame_index', 0)}"
                     point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, point_key))
-                    points.append(
+                    kf_points.append(
                         PointStruct(
                             id=point_id,
                             vector=vec.tolist(),
@@ -97,7 +100,7 @@ class QdrantManager:
                 for vec, meta in zip(vectors, metadata):
                     point_key = f"{video_id}_{meta.get('segment_id', '')}_cap_{meta.get('frame_index', 0)}"
                     point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, point_key))
-                    points.append(
+                    cap_points.append(
                         PointStruct(
                             id=point_id,
                             vector=vec.tolist(),
@@ -108,18 +111,31 @@ class QdrantManager:
                 logger.error(f"Mismatch in caption vectors ({len(vectors)}) and metadata ({len(metadata)}).")
 
         # 3. Batch Upsert to Qdrant
-        if points:
-            logger.info(f"Upserting {len(points)} points to Qdrant...")
+        if kf_points:
+            logger.info(f"Upserting {len(kf_points)} keyframe points to Qdrant...")
             try:
                 operation_info = self.client.upsert(
-                    collection_name=self.collection_name,
+                    collection_name=self.kf_collection,
                     wait=True,
-                    points=points
+                    points=kf_points
                 )
-                logger.info(f"Upsert successful: {operation_info.status.name}")
+                logger.info(f"Keyframe Upsert successful: {operation_info.status.name}")
             except Exception as e:
-                logger.error(f"Failed to upsert points: {e}")
-        else:
+                logger.error(f"Failed to upsert keyframe points: {e}")
+                
+        if cap_points:
+            logger.info(f"Upserting {len(cap_points)} caption points to Qdrant...")
+            try:
+                operation_info = self.client.upsert(
+                    collection_name=self.cap_collection,
+                    wait=True,
+                    points=cap_points
+                )
+                logger.info(f"Caption Upsert successful: {operation_info.status.name}")
+            except Exception as e:
+                logger.error(f"Failed to upsert caption points: {e}")
+                
+        if not kf_points and not cap_points:
             logger.info("No points to upsert.")
 
 # Quick Testing
