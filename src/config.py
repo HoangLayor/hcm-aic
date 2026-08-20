@@ -39,6 +39,7 @@ try:
         EMBEDDER_MODEL_ID: str = "Qwen/Qwen3-VL-Embedding-2B"
         EMBEDDER_BATCH_SIZE: int = Field(default=8, description="Batch size for Embedder.")
         IMAGE_RESIZE_PX: int = Field(default=512, description="Resize keyframes before embedding to save VRAM.")
+        VECTOR_DIM: int = Field(default=2048, description="Output embedding dimension for Qdrant vector collection.")
 
 except ImportError:
     try:
@@ -71,6 +72,7 @@ except ImportError:
             EMBEDDER_MODEL_ID: str = "Qwen/Qwen3-VL-Embedding-2B"
             EMBEDDER_BATCH_SIZE: int = Field(default=8, description="Batch size for Embedder.")
             IMAGE_RESIZE_PX: int = Field(default=512, description="Resize keyframes before embedding to save VRAM.")
+            VECTOR_DIM: int = Field(default=2048, description="Output embedding dimension for Qdrant vector collection.")
 
             class Config:
                 env_prefix = "AIC_"
@@ -106,6 +108,7 @@ except ImportError:
             EMBEDDER_MODEL_ID: str = os.getenv("AIC_EMBEDDER_MODEL_ID", "Qwen/Qwen3-VL-Embedding-2B")
             EMBEDDER_BATCH_SIZE: int = int(os.getenv("AIC_EMBEDDER_BATCH_SIZE", 8))
             IMAGE_RESIZE_PX: int = int(os.getenv("AIC_IMAGE_RESIZE_PX", 512))
+            VECTOR_DIM: int = int(os.getenv("AIC_VECTOR_DIM", 2048))
 
 # Global singleton configuration object
 config = AppConfig()

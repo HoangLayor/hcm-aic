@@ -17,9 +17,9 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 class QdrantManager:
-    def __init__(self, collection_name="aic2026_video_retrieval", vector_dim=1536):
+    def __init__(self, collection_name="aic2026_video_retrieval", vector_dim=None):
         self.collection_name = collection_name
-        self.vector_dim = vector_dim
+        self.vector_dim = vector_dim if vector_dim is not None else config.VECTOR_DIM
         
         # Local In-Memory / File-based Storage (Kaggle friendly)
         db_path = Path(config.DB_DIR)
