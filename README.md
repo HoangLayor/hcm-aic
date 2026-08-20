@@ -68,19 +68,12 @@ Pipeline xử lý theo quy trình 5 bước tuần tự, tải từng model vào
 Chọn Accelerator là **GPU T4x2** hoặc **P100**:
 
 ```bash
-# 1. Cài đặt các thư viện hệ điều hành xử lý Video/Audio lõi
-!apt-get update -y
-!apt-get install -y ffmpeg libavcodec-dev libavutil-dev libavformat-dev libswscale-dev
-
-# 2. Cài đặt thư viện AI và dependencies tương thích
+# 1. Cài đặt thư viện AI và dependencies tương thích
 !pip install -q --upgrade transformers accelerate qwen-vl-utils sentence-transformers
-!pip install -q pydantic-settings qdrant-client opencv-python pytest
-!pip install -q pyannote.audio soundfile decord av
+!pip install -q pydantic-settings qdrant-client opencv-python pytest pyannote.audio
+!apt-get install -y ffmpeg
 
-# 3. Gỡ bỏ torchcodec (Tránh lỗi xung đột C++ ABI trên Kaggle)
-!pip uninstall -y torchcodec
-
-# 4. Clone repository về Kaggle
+# 2. Clone repository về Kaggle
 !git clone https://github.com/HoangLayor/hcm-aic.git /kaggle/working/hcm-aic
 %cd /kaggle/working/hcm-aic
 ```
