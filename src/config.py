@@ -33,8 +33,8 @@ try:
         DINO_SIMILARITY_THRESHOLD: float = Field(default=0.65, description="Cosine threshold to group frames.")
         DINO_MAX_CANDIDATES: int = Field(default=10, description="Max candidate frames per group.")
         
-        # 3. Dense Captioning (Qwen3.5-2B) Configuration
-        VLM_MODEL_ID: str = "Qwen/Qwen3.5-2B"
+        # 3. Dense Captioning (Qwen3.5-4B) Configuration
+        VLM_MODEL_ID: str = "Qwen/Qwen3.5-4B"
         VLM_VIDEO_FPS: float = Field(default=1.0, description="Sampling rate (frames per sec) for VLM.")
         VLM_MAX_VIDEO_FRAMES: int = Field(default=32, description="Max frames allowed in VLM input.")
         VLM_MAX_NEW_TOKENS: int = Field(default=256, description="Max caption length.")
@@ -72,7 +72,7 @@ except ImportError:
             DINO_SIMILARITY_THRESHOLD: float = Field(default=0.65, description="Cosine threshold to group frames.")
             DINO_MAX_CANDIDATES: int = Field(default=10, description="Max candidate frames per group.")
             
-            VLM_MODEL_ID: str = "Qwen/Qwen3.5-2B"
+            VLM_MODEL_ID: str = "Qwen/Qwen3.5-4B"
             VLM_VIDEO_FPS: float = Field(default=1.0, description="Sampling rate (frames per sec) for VLM.")
             VLM_MAX_VIDEO_FRAMES: int = Field(default=32, description="Max frames allowed in VLM input.")
             VLM_MAX_NEW_TOKENS: int = Field(default=256, description="Max caption length.")
@@ -112,7 +112,7 @@ except ImportError:
             DINO_SIMILARITY_THRESHOLD: float = float(os.getenv("AIC_DINO_SIMILARITY_THRESHOLD", 0.65))
             DINO_MAX_CANDIDATES: int = int(os.getenv("AIC_DINO_MAX_CANDIDATES", 10))
             
-            VLM_MODEL_ID: str = os.getenv("AIC_VLM_MODEL_ID", "Qwen/Qwen3.5-2B")
+            VLM_MODEL_ID: str = os.getenv("AIC_VLM_MODEL_ID", "Qwen/Qwen3.5-4B")
             VLM_VIDEO_FPS: float = float(os.getenv("AIC_VLM_VIDEO_FPS", 1.0))
             VLM_MAX_VIDEO_FRAMES: int = int(os.getenv("AIC_VLM_MAX_VIDEO_FRAMES", 32))
             VLM_MAX_NEW_TOKENS: int = int(os.getenv("AIC_VLM_MAX_NEW_TOKENS", 256))
