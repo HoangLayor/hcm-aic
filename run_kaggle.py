@@ -38,7 +38,7 @@ def find_raw_videos(raw_dir_path: str, limit: int = None) -> list:
         video_files = video_files[:limit]
     return video_files
 
-def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int = None, stage: str = "all"):
+def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int = None, stage: str = "all", force: bool = False):
     """
     Staged Execution Pipeline designed for Kaggle/Colab (VRAM < 16GB).
     
@@ -47,6 +47,7 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
         raw_dir (str): Custom directory containing raw video files.
         limit (int): Maximum number of videos to process (useful for quick testing).
         stage (str): 'all', '1'/'vad', '2'/'dino', '3'/'vlm', '4'/'embed', '5'/'qdrant'
+        force (bool): If True, forces re-processing even if checkpoints/outputs already exist.
     """
     target_raw_dir = raw_dir if raw_dir else config.RAW_DIR
     stage = stage.lower()
@@ -97,6 +98,10 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
     logger.info("==================================================")
     logger.info("🚀 RUNNING REAL PIPELINE EXECUTION")
     logger.info(f"Target RAW_DIR: {target_raw_dir}")
+    if force:
+        logger.info("Mode: Force re-processing (--force enabled)")
+    else:
+        logger.info("Mode: Smart Checkpointing & Resume (Skipping existing files)")
     logger.info("==================================================")
 
     # Discover videos
@@ -116,8 +121,8 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
         from src.audio.vad_splitter import VadVideoSplitter
         splitter = VadVideoSplitter()
         for idx, v_path in enumerate(raw_videos, 1):
-            logger.info(f"[{idx}/{len(raw_videos)}] Splitting video: {v_path.name} ...")
-            splitter.process_video(str(v_path))
+            logger.info(f"[{idx}/{len(raw_videos)}] VAD Splitting: {v_path.name} ...")
+            splitter.process_video(str(v_path), force=force)
         free_memory()
 
     # 2. STAGE 2: KEYFRAME EXTRACTION (DINOv2)
@@ -127,7 +132,7 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
         with DINOv2Context() as extractor:
             for idx, vid in enumerate(video_ids, 1):
                 logger.info(f"[{idx}/{len(video_ids)}] Extracting keyframes for: {vid} ...")
-                extractor.process_video(vid)
+                extractor.process_video(vid, force=force)
         free_memory()
 
     # 3. STAGE 3: DENSE CAPTIONING (QWEN VLM)
@@ -137,7 +142,7 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
         with QwenCaptionerContext() as captioner:
             for idx, vid in enumerate(video_ids, 1):
                 logger.info(f"[{idx}/{len(video_ids)}] Generating captions for: {vid} ...")
-                captioner.process_video(vid)
+                captioner.process_video(vid, force=force)
         free_memory()
 
     # 4. STAGE 4: EMBEDDING (QWEN3-VL-EMBEDDER)
@@ -147,7 +152,7 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
         with EmbedderContext() as embedder:
             for idx, vid in enumerate(video_ids, 1):
                 logger.info(f"[{idx}/{len(video_ids)}] Generating embeddings for: {vid} ...")
-                embedder.process_video(vid)
+                embedder.process_video(vid, force=force)
         free_memory()
 
     # 5. STAGE 5: VECTOR DB INGESTION (QDRANT)
@@ -166,6 +171,7 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kaggle/Colab Orchestrator for AIC Video Pipeline")
     parser.add_argument("--dry-run", action="store_true", help="Run in dry-run mode (tests model load/unload only)")
+    parser.add_argument("--force", action="store_true", help="Force re-processing and overwrite existing checkpoints")
     parser.add_argument("--raw-dir", type=str, default=None, help="Custom path to raw videos directory")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of videos to process")
     parser.add_argument("--stage", type=str, default="all", choices=["all", "1", "2", "3", "4", "5", "vad", "dino", "vlm", "embed", "qdrant"], help="Run a specific stage only")
@@ -180,5 +186,6 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         raw_dir=args.raw_dir,
         limit=args.limit,
-        stage=args.stage
+        stage=args.stage,
+        force=args.force
     )

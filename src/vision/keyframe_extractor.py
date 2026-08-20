@@ -112,10 +112,25 @@ class KeyframeExtractor:
             
         return groups, keyframes, scores
 
-    def process_segment(self, segment_meta: dict, video_dir: Path):
-        segment_id = segment_meta['segment_id']
-        segment_file = Path(segment_meta['file_path'])
-        global_start_frame = segment_meta.get('global_start_frame', 0)
+    def process_segment(self, seg_meta: dict, video_dir: Path, force: bool = False):
+        """Extracts keyframes for a single segment and saves grouping metadata."""
+        segment_id = seg_meta['segment_id']
+        segment_file = Path(seg_meta['file_path'])
+        global_start_frame = seg_meta.get('global_start_frame', 0)
+        
+        meta_file = video_dir / "keyframes" / f"{segment_id}_meta.json"
+
+        # Checkpoint check: skip if meta file and keyframe images already exist
+        if not force and meta_file.exists():
+            try:
+                with open(meta_file, 'r', encoding='utf-8') as f:
+                    cached_data = json.load(f)
+                cached_groups = cached_data.get("groups", [])
+                if cached_groups and all(Path(g["image_path"]).exists() for g in cached_groups):
+                    logger.info(f"  -> [Skip] Keyframes for {segment_id} ({len(cached_groups)} keyframes already exist).")
+                    return
+            except Exception:
+                pass
         
         logger.info(f"Processing segment {segment_id} (Global Start: {global_start_frame})...")
         
@@ -161,14 +176,13 @@ class KeyframeExtractor:
             "groups": group_metadata
         }
         
-        meta_file = video_dir / "keyframes" / f"{segment_id}_meta.json"
         with open(meta_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
             
         logger.info(f"  -> {segment_id}: {len(groups)} groups, {len(keyframes)} keyframes saved.")
 
-    def process_video(self, video_id: str):
-        """Processes all segments of a video defined in manifest_vad.json."""
+    def process_video(self, video_id: str, force: bool = False):
+        """Processes all segments of a video defined in manifest_vad.json with resume support."""
         video_dir = Path(config.OUTPUT_DIR) / video_id
         manifest_path = video_dir / "manifest_vad.json"
         
@@ -184,7 +198,7 @@ class KeyframeExtractor:
             logger.info(f"Extracting keyframes for {len(segments)} segments in {video_id}...")
             
             for seg_meta in segments:
-                self.process_segment(seg_meta, video_dir)
+                self.process_segment(seg_meta, video_dir, force=force)
                 
             logger.info(f"Successfully finished Keyframe Extraction for {video_id}.")
         except Exception as e:

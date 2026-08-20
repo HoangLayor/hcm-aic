@@ -196,8 +196,8 @@ class VadVideoSplitter:
 
         return results
 
-    def process_video(self, video_path: str):
-        """End-to-end processing of a single video."""
+    def process_video(self, video_path: str, force: bool = False):
+        """End-to-end processing of a single video with checkpoint support."""
         start_t = time.time()
         video_path = Path(video_path)
         if not video_path.exists():
@@ -206,8 +206,21 @@ class VadVideoSplitter:
             
         output_dir = Path(config.OUTPUT_DIR) / video_path.stem / "segments"
         output_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = output_dir.parent / "manifest_vad.json"
+
+        # Checkpoint check: skip if manifest exists and all segment files are intact
+        if not force and manifest_path.exists():
+            try:
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    cached_manifest = json.load(f)
+                cached_segments = cached_manifest.get("segments", [])
+                if cached_segments and all(Path(s["file_path"]).exists() and Path(s["file_path"]).stat().st_size > 0 for s in cached_segments):
+                    logger.info(f"  -> [Skip] VAD Splitting for {video_path.name} (manifest and {len(cached_segments)} segments already exist).")
+                    return manifest_path
+            except Exception:
+                pass
+
         temp_audio = output_dir / "temp_audio.wav"
-        
         try:
             total_duration = self.get_video_duration(video_path)
             self.extract_audio(video_path, temp_audio)
@@ -215,7 +228,6 @@ class VadVideoSplitter:
             segments_meta = self.split_video(video_path, split_points, output_dir, total_duration=total_duration)
             
             # Save manifest
-            manifest_path = output_dir.parent / "manifest_vad.json"
             with open(manifest_path, 'w', encoding='utf-8') as f:
                 json.dump({"video_id": video_path.stem, "segments": segments_meta}, f, indent=2)
             

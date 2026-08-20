@@ -17,16 +17,24 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 class QdrantManager:
-    def __init__(self, collection_name="aic2026_video_retrieval", vector_dim=None):
-        self.collection_name = collection_name
+    def __init__(self, collection_name=None, vector_dim=None):
+        self.collection_name = collection_name if collection_name is not None else config.QDRANT_COLLECTION_NAME
         self.vector_dim = vector_dim if vector_dim is not None else config.VECTOR_DIM
         
-        # Local In-Memory / File-based Storage (Kaggle friendly)
-        db_path = Path(config.DB_DIR)
-        db_path.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"Connecting to Qdrant (Local Path: {db_path})...")
-        self.client = QdrantClient(path=str(db_path))
+        if hasattr(config, "QDRANT_URL") and config.QDRANT_URL:
+            logger.info(f"Connecting to Qdrant Cloud (URL: {config.QDRANT_URL})...")
+            self.client = QdrantClient(
+                url=config.QDRANT_URL,
+                api_key=config.QDRANT_API_KEY,
+                timeout=60
+            )
+        else:
+            # Local In-Memory / File-based Storage (Kaggle friendly)
+            db_path = Path(config.DB_DIR)
+            db_path.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"Connecting to Qdrant (Local Path: {db_path})...")
+            self.client = QdrantClient(path=str(db_path))
         
         # Initialize collection if it doesn't exist
         self._init_collection()
@@ -64,9 +72,11 @@ class QdrantManager:
                 
             if len(vectors) == len(metadata):
                 for vec, meta in zip(vectors, metadata):
+                    point_key = f"{video_id}_{meta.get('segment_id', '')}_kf_{meta.get('frame_index', 0)}"
+                    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, point_key))
                     points.append(
                         PointStruct(
-                            id=str(uuid.uuid4()),
+                            id=point_id,
                             vector=vec.tolist(),
                             payload=meta
                         )
@@ -85,9 +95,11 @@ class QdrantManager:
                 
             if len(vectors) == len(metadata):
                 for vec, meta in zip(vectors, metadata):
+                    point_key = f"{video_id}_{meta.get('segment_id', '')}_cap_{meta.get('frame_index', 0)}"
+                    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, point_key))
                     points.append(
                         PointStruct(
-                            id=str(uuid.uuid4()),
+                            id=point_id,
                             vector=vec.tolist(),
                             payload=meta
                         )

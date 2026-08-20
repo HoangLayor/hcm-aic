@@ -17,6 +17,10 @@ try:
         OUTPUT_DIR: str = Field(default="./output", description="Directory to store intermediate artifacts.")
         DB_DIR: str = Field(default="./qdrant_db", description="Directory for Qdrant local storage.")
         
+        QDRANT_URL: str = Field(default="https://4ae329d5-5ea2-466b-a1a4-ff1d8754a68a.sa-east-1-0.aws.cloud.qdrant.io", description="Qdrant Cloud URL.")
+        QDRANT_API_KEY: str = Field(default="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIiwic3ViamVjdCI6ImFwaS1rZXk6ZDYyZjRkYmItYjU4Yi00ODhhLTk4ZDEtY2FiNzAwNmNmOTJjIn0.RDCtpTqEcEH5BnV3FKiRQo3J1SjzOYj0KtM00yK_H44", description="Qdrant Cloud API Key.")
+        QDRANT_COLLECTION_NAME: str = Field(default="noisy_eggs", description="Target Qdrant Collection Name.")
+        
         # 1. VAD & Splitter Configuration
         VAD_MAX_SEGMENT_DURATION_SEC: int = Field(default=30, description="Maximum duration per segment in seconds.")
         VAD_MIN_SILENCE_MS: int = Field(default=1000, description="Minimum silence duration to trigger split.")
@@ -54,6 +58,10 @@ except ImportError:
             OUTPUT_DIR: str = Field(default="./output", description="Directory to store intermediate artifacts.")
             DB_DIR: str = Field(default="./qdrant_db", description="Directory for Qdrant local storage.")
             
+            QDRANT_URL: str = Field(default="https://4ae329d5-5ea2-466b-a1a4-ff1d8754a68a.sa-east-1-0.aws.cloud.qdrant.io", description="Qdrant Cloud URL.")
+            QDRANT_API_KEY: str = Field(default="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIiwic3ViamVjdCI6ImFwaS1rZXk6ZDYyZjRkYmItYjU4Yi00ODhhLTk4ZDEtY2FiNzAwNmNmOTJjIn0.RDCtpTqEcEH5BnV3FKiRQo3J1SjzOYj0KtM00yK_H44", description="Qdrant Cloud API Key.")
+            QDRANT_COLLECTION_NAME: str = Field(default="noisy_eggs", description="Target Qdrant Collection Name.")
+            
             VAD_MAX_SEGMENT_DURATION_SEC: int = Field(default=30, description="Maximum duration per segment in seconds.")
             VAD_MIN_SILENCE_MS: int = Field(default=1000, description="Minimum silence duration to trigger split.")
             VAD_THRESHOLD: float = Field(default=0.5, description="Silence detection threshold.")
@@ -89,6 +97,10 @@ except ImportError:
             RAW_DIR: str = os.getenv("AIC_RAW_DIR", "./data")
             OUTPUT_DIR: str = os.getenv("AIC_OUTPUT_DIR", "./output")
             DB_DIR: str = os.getenv("AIC_DB_DIR", "./qdrant_db")
+            
+            QDRANT_URL: str = os.getenv("AIC_QDRANT_URL", "https://4ae329d5-5ea2-466b-a1a4-ff1d8754a68a.sa-east-1-0.aws.cloud.qdrant.io")
+            QDRANT_API_KEY: str = os.getenv("AIC_QDRANT_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIiwic3ViamVjdCI6ImFwaS1rZXk6ZDYyZjRkYmItYjU4Yi00ODhhLTk4ZDEtY2FiNzAwNmNmOTJjIn0.RDCtpTqEcEH5BnV3FKiRQo3J1SjzOYj0KtM00yK_H44")
+            QDRANT_COLLECTION_NAME: str = os.getenv("AIC_QDRANT_COLLECTION_NAME", "noisy_eggs")
             
             VAD_MAX_SEGMENT_DURATION_SEC: int = int(os.getenv("AIC_VAD_MAX_SEGMENT_DURATION_SEC", 30))
             VAD_MIN_SILENCE_MS: int = int(os.getenv("AIC_VAD_MIN_SILENCE_MS", 1000))
