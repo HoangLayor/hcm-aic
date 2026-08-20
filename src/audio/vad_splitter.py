@@ -5,13 +5,22 @@ import logging
 import subprocess
 from pathlib import Path
 from typing import List, Dict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import torch
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
 from src.config import config
 
 logger = logging.getLogger("VadSplitter")
 logger.setLevel(logging.INFO)
-# Basic console handler
 if not logger.handlers:
     ch = logging.StreamHandler()
     ch.setFormatter(logging.Formatter('[%(levelname)s] %(asctime)s - %(message)s'))
@@ -35,9 +44,38 @@ class VadVideoSplitter:
             logger.error(f"Failed to load Silero VAD: {e}")
             raise
 
+    def get_video_duration(self, video_path: Path) -> float:
+        """Gets video duration accurately using cv2 or ffprobe."""
+        if cv2 is not None:
+            try:
+                cap = cv2.VideoCapture(str(video_path))
+                if cap.isOpened():
+                    fps = cap.get(cv2.CAP_PROP_FPS) or config.TARGET_FPS
+                    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                    cap.release()
+                    if frame_count > 0 and fps > 0:
+                        return float(frame_count / fps)
+            except Exception:
+                pass
+
+        # Fallback to ffprobe
+        try:
+            cmd = [
+                "ffprobe", "-v", "error", "-show_entries",
+                "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
+                str(video_path)
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                return float(res.stdout.strip())
+        except Exception:
+            pass
+
+        return -1.0
+
     def extract_audio(self, video_path: Path, temp_audio_path: Path):
         """Extracts 16kHz mono audio from video."""
-        logger.info(f"Extracting audio from {video_path}...")
+        logger.info(f"Extracting audio from {video_path.name}...")
         cmd = [
             "ffmpeg", "-y", "-i", str(video_path),
             "-vn", "-acodec", "pcm_s16le", "-ar", str(self.sample_rate), "-ac", "1",
@@ -69,57 +107,94 @@ class VadVideoSplitter:
                     next_start = speech_timestamps[i+1]['start'] / self.sample_rate
                     # Mid-point split
                     split_points.append(round(curr_end + (next_start - curr_end) / 2.0, 3))
-            
-            logger.info(f"Found {len(split_points)} split points based on silence.")
+
+            logger.info(f"Found {len(split_points)} split points based on silence ({len(split_points) + 1} segments).")
             return split_points
         except Exception as e:
             logger.error(f"VAD analysis failed: {e}")
             raise
 
-    def split_video(self, video_path: Path, split_points: List[float], output_dir: Path) -> List[Dict]:
-        """Splits video at given points using precise re-encoding to avoid frame drift."""
-        logger.info(f"Splitting video into {len(split_points) + 1} segments...")
-        segments_meta = []
+    def _cut_single_segment(self, args: dict) -> dict:
+        """Helper to cut a single segment with fast seeking and fixed CFR."""
+        video_path = args["video_path"]
+        output_file = args["output_file"]
+        start_time = args["start_time"]
+        duration = args["duration"]
+        segment_id = args["segment_id"]
+        global_start_frame = args["global_start_frame"]
+
+        # Fast Input Seeking: -ss before -i + ultrafast re-encoding + strict 30 FPS CFR
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", f"{start_time:.3f}",
+            "-i", str(video_path),
+        ]
+        if duration is not None and duration > 0:
+            cmd.extend(["-t", f"{duration:.3f}"])
+        cmd.extend([
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-r", str(config.TARGET_FPS),
+            "-vsync", "cfr",
+            "-c:a", "aac",
+            "-avoid_negative_ts", "make_zero",
+            str(output_file)
+        ])
+
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        return {
+            "segment_id": segment_id,
+            "file_path": str(output_file),
+            "start_time_sec": start_time,
+            "end_time_sec": (start_time + duration) if duration else -1.0,
+            "duration_sec": duration if duration else -1.0,
+            "global_start_frame": global_start_frame
+        }
+
+    def split_video(self, video_path: Path, split_points: List[float], output_dir: Path, total_duration: float = -1.0) -> List[Dict]:
+        """Splits video in parallel using fast seeking and multi-threading."""
         points = [0.0] + split_points
         video_id = video_path.stem
-        
+        cut_tasks = []
+
         for i in range(len(points)):
             start_time = points[i]
-            end_time = points[i+1] if i < len(points) - 1 else None
+            end_time = points[i+1] if i < len(points) - 1 else (total_duration if total_duration > 0 else None)
             duration = (end_time - start_time) if end_time else None
-            
-            # Fallback: if duration > MAX_SEGMENT_DURATION, we just log a warning for now (keep it simple)
-            if duration and duration > config.VAD_MAX_SEGMENT_DURATION_SEC:
-                logger.warning(f"Segment {i+1} duration ({duration}s) exceeds max ({config.VAD_MAX_SEGMENT_DURATION_SEC}s).")
-
             output_file = output_dir / f"{video_id}_seg{i+1:03d}.mp4"
-            
-            # Using precise cutting: re-encode with ultrafast to guarantee accurate timestamps and no frame drift
-            cmd = ["ffmpeg", "-y", "-i", str(video_path), "-ss", str(start_time)]
-            if duration:
-                cmd.extend(["-t", str(duration)])
-            # Re-encode video very fast, copy audio
-            cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-c:a", "aac", str(output_file)])
-            
-            logger.info(f"Cutting segment {i+1}: start={start_time}s, duration={duration}s")
-            try:
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                # Calculate precise global start frame assuming fixed TARGET_FPS
-                global_start_frame = int(start_time * config.TARGET_FPS)
-                
-                segments_meta.append({
-                    "segment_id": f"{video_id}_seg{i+1:03d}",
-                    "file_path": str(output_file),
-                    "start_time_sec": start_time,
-                    "end_time_sec": end_time if end_time else -1.0,
-                    "duration_sec": duration if duration else -1.0,
-                    "global_start_frame": global_start_frame
-                })
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Failed to cut segment {i+1}: {e.stderr.decode('utf-8', errors='ignore')}")
-                raise
+            global_start_frame = int(round(start_time * config.TARGET_FPS))
 
-        return segments_meta
+            cut_tasks.append({
+                "video_path": video_path,
+                "output_file": output_file,
+                "start_time": start_time,
+                "duration": duration,
+                "segment_id": f"{video_id}_seg{i+1:03d}",
+                "global_start_frame": global_start_frame,
+                "index": i
+            })
+
+        max_workers = min(4, os.cpu_count() or 2)
+        logger.info(f"Cutting {len(cut_tasks)} segments in parallel (using {max_workers} CPU workers)...")
+        results = [None] * len(cut_tasks)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_task = {
+                executor.submit(self._cut_single_segment, task): task["index"]
+                for task in cut_tasks
+            }
+            for future in as_completed(future_to_task):
+                idx = future_to_task[future]
+                try:
+                    res = future.result()
+                    results[idx] = res
+                except Exception as e:
+                    logger.error(f"Failed to cut segment index {idx+1}: {e}")
+                    raise
+
+        return results
 
     def process_video(self, video_path: str):
         """End-to-end processing of a single video."""
@@ -134,9 +209,10 @@ class VadVideoSplitter:
         temp_audio = output_dir / "temp_audio.wav"
         
         try:
+            total_duration = self.get_video_duration(video_path)
             self.extract_audio(video_path, temp_audio)
             split_points = self.get_split_points(temp_audio)
-            segments_meta = self.split_video(video_path, split_points, output_dir)
+            segments_meta = self.split_video(video_path, split_points, output_dir, total_duration=total_duration)
             
             # Save manifest
             manifest_path = output_dir.parent / "manifest_vad.json"
@@ -158,4 +234,4 @@ if __name__ == "__main__":
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     splitter = VadVideoSplitter()
     # Replace with a real video path to test
-    # splitter.process_video("raw/vid_sample_001.mp4")
+    # splitter.process_video("data/vid_sample_001.mp4")
