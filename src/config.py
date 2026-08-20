@@ -86,7 +86,7 @@ except ImportError:
             TARGET_FPS: int = int(os.getenv("AIC_TARGET_FPS", 30))
             USE_TRANSCRIPT_BRANCH: bool = os.getenv("AIC_USE_TRANSCRIPT_BRANCH", "False").lower() in ("true", "1")
             
-            RAW_DIR: str = os.getenv("AIC_RAW_DIR", "./raw")
+            RAW_DIR: str = os.getenv("AIC_RAW_DIR", "./data")
             OUTPUT_DIR: str = os.getenv("AIC_OUTPUT_DIR", "./output")
             DB_DIR: str = os.getenv("AIC_DB_DIR", "./qdrant_db")
             
