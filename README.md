@@ -17,6 +17,12 @@ Pipeline xử lý theo quy trình 5 bước tuần tự, tải từng model vào
  │ Tách video thành các phân đoạn (segments) theo giọng nói    │
  └─────────────────────────────┬───────────────────────────────┘
                                │
+                               ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │ STAGE 1.5: PhoASR & Pyannote (Transcript)                   │
+ │ Trích xuất âm thanh thành văn bản & phân tách người nói     │
+ └─────────────────────────────┬───────────────────────────────┘
+                               │
        ┌───────────────────────┴───────────────────────┐
        ▼                                               ▼
  ┌───────────────────────────┐                   ┌───────────────────────────┐
@@ -47,6 +53,7 @@ Pipeline xử lý theo quy trình 5 bước tuần tự, tải từng model vào
 ### Chi tiết các thành phần trong `src/`:
 - [`src/config.py`](file:///d:/Projects/aic/src/config.py): Cấu hình toàn cục tập trung (hỗ trợ Pydantic v1, v2 và biến môi trường `AIC_*`).
 - [`src/audio/vad_splitter.py`](file:///d:/Projects/aic/src/audio/vad_splitter.py): Tách video dựa vào khoảng lặng (Silero VAD) và FFmpeg `libx264 -preset ultrafast` chống lệch frame.
+- [`src/audio/transcript_extractor.py`](file:///d:/Projects/aic/src/audio/transcript_extractor.py): Trích xuất âm thanh thành văn bản (PhoASR) và nhận diện người nói (Pyannote Diarization).
 - [`src/vision/keyframe_extractor.py`](file:///d:/Projects/aic/src/vision/keyframe_extractor.py): Dùng DINOv2 ViT-Base (`dinov2_vitb14`) gom cụm cosine và trích frame đại diện (medoid).
 - [`src/vlm/segment_captioner.py`](file:///d:/Projects/aic/src/vlm/segment_captioner.py): Dùng Qwen VLM (`Qwen/Qwen3.5-2B`) mô tả nội dung video ngắn.
 - [`src/embedding/qwen3_embedder.py`](file:///d:/Projects/aic/src/embedding/qwen3_embedder.py): Dùng `Qwen/Qwen3-VL-Embedding-2B` nhúng đồng thời cả ảnh keyframe và text caption vào cùng một không gian vector đa phương thức.
@@ -95,9 +102,10 @@ Nạp thử 5 mô hình vào GPU/RAM và giải phóng bộ nhớ để đảm b
 
 #### 4. Chạy riêng lẻ từng Stage nếu cần Debug:
 ```bash
-!python run_kaggle.py --stage vad       # Chỉ chạy Stage 1 (VAD Splitting)
-!python run_kaggle.py --stage dino      # Chỉ chạy Stage 2 (Keyframe DINOv2)
-!python run_kaggle.py --stage vlm       # Chỉ chạy Stage 3 (Qwen Dense Captioning)
+!python run_kaggle.py --stage vad         # Chỉ chạy Stage 1 (VAD Splitting)
+!python run_kaggle.py --stage transcript  # Chỉ chạy Stage 1.5 (Transcript PhoASR)
+!python run_kaggle.py --stage dino        # Chỉ chạy Stage 2 (Keyframe DINOv2)
+!python run_kaggle.py --stage vlm         # Chỉ chạy Stage 3 (Qwen Dense Captioning)
 !python run_kaggle.py --stage embed     # Chỉ chạy Stage 4 (Qwen3-VL Embedding)
 !python run_kaggle.py --stage qdrant    # Chỉ chạy Stage 5 (Qdrant Ingestion)
 ```
@@ -115,6 +123,8 @@ Hệ thống hỗ trợ cấu hình động thông qua file [`src/config.py`](fi
 | `AIC_DB_DIR` | `./qdrant_db` | Thư mục lưu trữ database vector Qdrant cục bộ. |
 | `AIC_VECTOR_DIM` | `2048` | Kích thước vector nhúng của Qwen3-VL-Embedding. |
 | `AIC_TARGET_FPS` | `30` | FPS mục tiêu cố định chống trôi frame timestamp. |
+| `AIC_ASR_MODEL_ID` | `Qualcomm-AI-Research/PhoASR-whisper-small` | Model nhận diện giọng nói (ASR). |
+| `AIC_HF_TOKEN` | `(rỗng)` | HuggingFace Token bắt buộc nếu muốn bật Pyannote Diarization (nhận diện người nói). |
 | `AIC_DINO_MODEL_ID` | `dinov2_vitb14` | Model DINOv2 trích đặc trưng hình ảnh. |
 | `AIC_DINO_SIMILARITY_THRESHOLD` | `0.65` | Ngưỡng Cosine gom cụm frame keyframe. |
 | `AIC_VLM_MODEL_ID` | `Qwen/Qwen3.5-2B` | Model Qwen VLM sinh caption video. |
@@ -213,8 +223,5 @@ RRF được chứng minh là tăng độ chính xác lên 10-15% trong các h�
 Nhiều truy vấn yêu cầu tìm vật thể rất nhỏ (Ví dụ: "Biển báo cấm rẽ trái ở góc màn hình"). Vector của một ảnh toàn cảnh sẽ bị nhiễu và dễ bỏ qua biển báo này. 
 - **Đề xuất:** Tích hợp mô hình Zero-shot Object Detection (như **YOLO-World** hoặc **GroundingDINO**). Với mỗi Keyframe, crop các vật thể con ra, sau đó dùng Qwen-Embedder nhúng các ảnh Crop này thành các vector độc lập đính kèm với `frame_index` gốc.
 
-### C. Khôi phục luồng Whisper ASR (Âm thanh)
-Đối với các câu hỏi Q&A liên quan đến lời nói của nhân vật (Ví dụ: "MC đang đọc câu thơ gì?"), mô hình hình ảnh sẽ không thể nắm bắt được. Hãy bật lại cờ `USE_TRANSCRIPT_BRANCH = True` trong file config để tích hợp Whisper / PhoASR vào kho dữ liệu Qdrant.
-
-### D. Tối ưu hóa Thuật toán Cửa sổ trượt (Sliding Window) cho TRAKE
+### C. Tối ưu hóa Thuật toán Cửa sổ trượt (Sliding Window) cho TRAKE
 Truy vấn TRAKE yêu cầu 4 khoảnh khắc liên tiếp. Đôi khi DINOv2 trích xuất thiếu mất 1 khoảnh khắc quan trọng do ngưỡng Similar quá cao. Hãy nội suy (interpolate) các khung hình giữa 2 keyframe nếu điểm số của chuỗi sự kiện bị đứt gãy.

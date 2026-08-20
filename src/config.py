@@ -28,6 +28,11 @@ try:
         VAD_THRESHOLD: float = Field(default=0.5, description="Silence detection threshold.")
         VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum speech duration.")
         
+        # 1.5. Transcript & Diarization Configuration
+        ASR_MODEL_ID: str = "Qualcomm-AI-Research/PhoASR-whisper-small"
+        DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-community-1"
+        HF_TOKEN: str = Field(default="", description="HuggingFace Token for Pyannote")
+        
         # 2. Keyframe Extraction (DINOv2) Configuration
         DINO_MODEL_ID: str = "dinov2_vitb14"
         DINO_BATCH_SIZE: int = Field(default=16, description="Batch size for DINOv2.")

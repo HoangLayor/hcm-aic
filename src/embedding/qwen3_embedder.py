@@ -122,6 +122,9 @@ class MultiModalEmbedder:
             all_caption_metadata = []
             all_caption_texts = []
             
+            all_transcript_metadata = []
+            all_transcript_texts = []
+            
             for seg_meta in segments:
                 segment_id = seg_meta['segment_id']
                 
@@ -152,11 +155,29 @@ class MultiModalEmbedder:
                         "point_type": "caption",
                         "video_id": video_id,
                         "segment_id": segment_id,
-                        "frame_index": cap_data['global_start_frame'], # Approximation
+                        "frame_index": cap_data['global_start_frame'],
                         "start_time_sec": seg_meta['start_time_sec'],
                         "end_time_sec": seg_meta['end_time_sec'],
-                        "caption": cap_data['caption']
+                        "text": cap_data['caption']
                     })
+                    
+                # 3. Gather Transcripts
+                trans_meta_file = video_dir / "transcripts" / f"{segment_id}_transcript.json"
+                if trans_meta_file.exists():
+                    with open(trans_meta_file, 'r', encoding='utf-8') as f:
+                        trans_data = json.load(f)
+                    full_text = trans_data.get('full_text', "")
+                    if full_text:
+                        all_transcript_texts.append(full_text)
+                        all_transcript_metadata.append({
+                            "point_type": "transcript",
+                            "video_id": video_id,
+                            "segment_id": segment_id,
+                            "frame_index": trans_data.get('global_start_frame', 0),
+                            "start_time_sec": trans_data.get('start_time_sec', 0.0),
+                            "end_time_sec": trans_data.get('end_time_sec', 0.0),
+                            "text": full_text
+                        })
 
             # Create Embeddings output directory
             embed_dir = video_dir / "embeddings"
@@ -177,6 +198,14 @@ class MultiModalEmbedder:
                 torch.save(torch.from_numpy(txt_vectors), embed_dir / "caption_vectors.pt")
                 with open(embed_dir / "caption_metadata.json", 'w', encoding='utf-8') as f:
                     json.dump(all_caption_metadata, f, indent=2, ensure_ascii=False)
+                    
+            # Embed Transcripts (Tạm thời tắt theo yêu cầu User)
+            # if all_transcript_texts:
+            #     logger.info(f"Embedding {len(all_transcript_texts)} transcripts...")
+            #     trans_vectors = self.embed_texts(all_transcript_texts)
+            #     torch.save(torch.from_numpy(trans_vectors), embed_dir / "transcript_vectors.pt")
+            #     with open(embed_dir / "transcript_metadata.json", 'w', encoding='utf-8') as f:
+            #         json.dump(all_transcript_metadata, f, indent=2, ensure_ascii=False)
             
             logger.info(f"Successfully saved embeddings for {video_id}.")
             
