@@ -87,14 +87,27 @@ class MultiModalEmbedder:
             
         return np.concatenate(all_vectors, axis=0) if all_vectors else np.array([])
 
-    def process_video(self, video_id: str):
-        """Embeds all keyframes and captions for a given video."""
+    def process_video(self, video_id: str, force: bool = False):
+        """Embeds all keyframes and captions for a given video with checkpoint support."""
         video_dir = Path(config.OUTPUT_DIR) / video_id
         manifest_path = video_dir / "manifest_vad.json"
+        embed_dir = video_dir / "embeddings"
         
         if not manifest_path.exists():
             logger.error(f"Manifest not found for video {video_id}.")
             return
+
+        # Checkpoint check: skip if embeddings already exist on disk
+        if not force and embed_dir.exists():
+            kf_vec = embed_dir / "keyframe_vectors.pt"
+            kf_meta = embed_dir / "keyframe_metadata.json"
+            cap_vec = embed_dir / "caption_vectors.pt"
+            cap_meta = embed_dir / "caption_metadata.json"
+            has_kf = kf_vec.exists() and kf_meta.exists() and kf_vec.stat().st_size > 0
+            has_cap = cap_vec.exists() and cap_meta.exists() and cap_vec.stat().st_size > 0
+            if has_kf or has_cap:
+                logger.info(f"  -> [Skip] Embeddings for {video_id} (already exist on disk).")
+                return
             
         try:
             with open(manifest_path, 'r', encoding='utf-8') as f:

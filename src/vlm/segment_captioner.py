@@ -109,8 +109,8 @@ class SegmentCaptioner:
             logger.error(f"Error generating caption for {video_path.name}: {e}")
             return ""
 
-    def process_video(self, video_id: str):
-        """Generates captions for all segments of a video."""
+    def process_video(self, video_id: str, force: bool = False):
+        """Generates captions for all segments of a video with checkpoint support."""
         video_dir = Path(config.OUTPUT_DIR) / video_id
         manifest_path = video_dir / "manifest_vad.json"
         
@@ -133,8 +133,21 @@ class SegmentCaptioner:
             for seg_meta in segments:
                 segment_id = seg_meta['segment_id']
                 segment_file = Path(seg_meta['file_path'])
+                cap_file = captions_dir / f"{segment_id}_caption.json"
+
+                # Checkpoint check: skip generation if caption file already exists
+                if not force and cap_file.exists():
+                    try:
+                        with open(cap_file, 'r', encoding='utf-8') as f:
+                            cap_data = json.load(f)
+                        if cap_data.get("caption"):
+                            logger.info(f"  -> [Skip] Caption for {segment_id} (already generated: {cap_data['caption'][:40]}...).")
+                            all_captions.append(cap_data)
+                            continue
+                    except Exception:
+                        pass
                 
-                logger.info(f"Processing segment {segment_id}...")
+                logger.info(f"Processing segment {segment_id} with Qwen VLM...")
                 caption_text = self.generate_caption(segment_file)
                 
                 # Save individual caption
@@ -144,7 +157,7 @@ class SegmentCaptioner:
                     "caption": caption_text
                 }
                 
-                with open(captions_dir / f"{segment_id}_caption.json", 'w', encoding='utf-8') as f:
+                with open(cap_file, 'w', encoding='utf-8') as f:
                     json.dump(cap_data, f, indent=2, ensure_ascii=False)
                     
                 all_captions.append(cap_data)
