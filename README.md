@@ -110,7 +110,7 @@ Hệ thống hỗ trợ cấu hình động thông qua file [`src/config.py`](fi
 
 | Tên biến môi trường | Giá trị mặc định | Mô tả |
 | :--- | :--- | :--- |
-| `AIC_RAW_DIR` | `./raw` | Thư mục chứa các file video gốc (`.mp4`, `.mkv`,...). |
+| `AIC_RAW_DIR` | `./data` | Thư mục chứa các file video gốc (`.mp4`, `.mkv`,...). |
 | `AIC_OUTPUT_DIR` | `./output` | Thư mục lưu các artifact trung gian (segments, keyframes, captions, embeddings). |
 | `AIC_DB_DIR` | `./qdrant_db` | Thư mục lưu trữ database vector Qdrant cục bộ. |
 | `AIC_VECTOR_DIM` | `2048` | Kích thước vector nhúng của Qwen3-VL-Embedding. |

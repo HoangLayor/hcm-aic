@@ -13,7 +13,7 @@ try:
         USE_TRANSCRIPT_BRANCH: bool = Field(default=False, description="Enable ASR transcript collection.")
         
         # Storage Paths
-        RAW_DIR: str = Field(default="./raw", description="Directory containing raw MP4 video files.")
+        RAW_DIR: str = Field(default="./data", description="Directory containing raw MP4 video files.")
         OUTPUT_DIR: str = Field(default="./output", description="Directory to store intermediate artifacts.")
         DB_DIR: str = Field(default="./qdrant_db", description="Directory for Qdrant local storage.")
         
@@ -50,7 +50,7 @@ except ImportError:
             TARGET_FPS: int = Field(default=30, description="Target FPS to avoid frame drift.")
             USE_TRANSCRIPT_BRANCH: bool = Field(default=False, description="Enable ASR transcript collection.")
             
-            RAW_DIR: str = Field(default="./raw", description="Directory containing raw MP4 video files.")
+            RAW_DIR: str = Field(default="./data", description="Directory containing raw MP4 video files.")
             OUTPUT_DIR: str = Field(default="./output", description="Directory to store intermediate artifacts.")
             DB_DIR: str = Field(default="./qdrant_db", description="Directory for Qdrant local storage.")
             
