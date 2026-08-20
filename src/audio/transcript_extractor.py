@@ -201,13 +201,19 @@ class TranscriptExtractor:
             
         logger.info(f"  -> Transcript generated ({len(transcript_data)} utterances)")
 
-    def process_video(self, video_id: str):
+    def process_video(self, video_id: str, force: bool = False):
         """Processes all segments of a video."""
         video_dir = Path(config.OUTPUT_DIR) / video_id
         manifest_path = video_dir / "manifest_vad.json"
         
         if not manifest_path.exists():
             logger.error(f"Manifest not found for {video_id}")
+            return
+            
+        # Optional: Skip logic if transcripts already exist
+        transcript_dir = video_dir / "transcripts"
+        if not force and transcript_dir.exists() and any(transcript_dir.iterdir()):
+            logger.info(f"Transcripts already exist for {video_id}. Skipping. (Use --force to override)")
             return
             
         try:

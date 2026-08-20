@@ -38,7 +38,17 @@ class VadVideoSplitter:
                 trust_repo=True
             )
             self.get_speech_timestamps = utils[0]
-            self.read_audio = utils[2]
+            # Override read_audio to avoid torchaudio/torchcodec dependencies
+            def safe_read_audio(audio_path, sampling_rate):
+                import soundfile as sf
+                data, sr = sf.read(audio_path, dtype='float32')
+                if sr != sampling_rate:
+                    raise ValueError(f"Expected {sampling_rate} Hz, got {sr} Hz")
+                if len(data.shape) > 1:
+                    data = data[:, 0] # Mono
+                import torch
+                return torch.from_numpy(data)
+            self.read_audio = safe_read_audio
             logger.info("Silero VAD initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to load Silero VAD: {e}")

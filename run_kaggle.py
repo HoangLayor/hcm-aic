@@ -63,6 +63,13 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
         splitter = VadVideoSplitter()
         free_memory()
 
+        # 1.5. DRY RUN TRANSCRIPT
+        logger.info("--- STAGE 1.5: Transcript Extraction (PhoASR & Pyannote) (Dry-Run) ---")
+        from src.audio.transcript_extractor import TranscriptContext
+        with TranscriptContext() as transcriber:
+            pass
+        free_memory()
+
         # 2. DRY RUN DINO
         logger.info("--- STAGE 2: Keyframe Extraction (DINOv2) (Dry-Run) ---")
         from src.vision.keyframe_extractor import DINOv2Context
