@@ -31,15 +31,17 @@ class SegmentCaptioner:
                 torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
                 device_map="auto",
                 attn_implementation="sdpa" if torch.cuda.is_available() else "eager",
+                trust_remote_code=True,
             )
-            self.processor = AutoProcessor.from_pretrained(config.VLM_MODEL_ID)
+            self.processor = AutoProcessor.from_pretrained(config.VLM_MODEL_ID, trust_remote_code=True)
             
             # Constrain video length and resolution strictly to prevent OOM
-            self.processor.video_processor.max_frames = config.VLM_MAX_VIDEO_FRAMES
-            self.processor.video_processor.size = {
-                "shortest_edge": 4_096,
-                "longest_edge": 8_388_608, # Max pixel budget
-            }
+            if hasattr(self.processor, "video_processor") and self.processor.video_processor is not None:
+                self.processor.video_processor.max_frames = config.VLM_MAX_VIDEO_FRAMES
+                self.processor.video_processor.size = {
+                    "shortest_edge": 4_096,
+                    "longest_edge": 8_388_608, # Max pixel budget
+                }
             logger.info("Qwen VLM loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load Qwen VLM: {e}")
