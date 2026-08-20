@@ -24,7 +24,7 @@ try:
         VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum speech duration.")
         
         # 2. Keyframe Extraction (DINOv2) Configuration
-        DINO_MODEL_ID: str = "facebookresearch/dinov2_vitb14"
+        DINO_MODEL_ID: str = "dinov2_vitb14"
         DINO_BATCH_SIZE: int = Field(default=16, description="Batch size for DINOv2.")
         DINO_SIMILARITY_THRESHOLD: float = Field(default=0.65, description="Cosine threshold to group frames.")
         DINO_MAX_CANDIDATES: int = Field(default=10, description="Max candidate frames per group.")
@@ -58,7 +58,7 @@ except ImportError:
             VAD_THRESHOLD: float = Field(default=0.5, description="Silence detection threshold.")
             VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum speech duration.")
             
-            DINO_MODEL_ID: str = "facebookresearch/dinov2_vitb14"
+            DINO_MODEL_ID: str = "dinov2_vitb14"
             DINO_BATCH_SIZE: int = Field(default=16, description="Batch size for DINOv2.")
             DINO_SIMILARITY_THRESHOLD: float = Field(default=0.65, description="Cosine threshold to group frames.")
             DINO_MAX_CANDIDATES: int = Field(default=10, description="Max candidate frames per group.")
@@ -93,7 +93,7 @@ except ImportError:
             VAD_THRESHOLD: float = float(os.getenv("AIC_VAD_THRESHOLD", 0.5))
             VAD_MIN_SPEECH_DURATION_MS: int = int(os.getenv("AIC_VAD_MIN_SPEECH_DURATION_MS", 250))
             
-            DINO_MODEL_ID: str = os.getenv("AIC_DINO_MODEL_ID", "facebookresearch/dinov2_vitb14")
+            DINO_MODEL_ID: str = os.getenv("AIC_DINO_MODEL_ID", "dinov2_vitb14")
             DINO_BATCH_SIZE: int = int(os.getenv("AIC_DINO_BATCH_SIZE", 16))
             DINO_SIMILARITY_THRESHOLD: float = float(os.getenv("AIC_DINO_SIMILARITY_THRESHOLD", 0.65))
             DINO_MAX_CANDIDATES: int = int(os.getenv("AIC_DINO_MAX_CANDIDATES", 10))

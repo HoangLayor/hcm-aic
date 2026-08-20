@@ -21,7 +21,8 @@ class KeyframeExtractor:
         logger.info(f"Loading DINOv2 ({config.DINO_MODEL_ID})...")
         try:
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            self.dino = torch.hub.load('facebookresearch/dinov2', config.DINO_MODEL_ID).eval().to(self.device)
+            model_entrypoint = config.DINO_MODEL_ID.split('/')[-1]
+            self.dino = torch.hub.load('facebookresearch/dinov2', model_entrypoint).eval().to(self.device)
             # Standard ImageNet norm values used by DINOv2
             self.mean = torch.tensor((0.485, 0.456, 0.406), device=self.device).view(3, 1, 1)
             self.std = torch.tensor((0.229, 0.224, 0.225), device=self.device).view(3, 1, 1)
