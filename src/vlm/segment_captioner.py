@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import re
 import torch
 from pathlib import Path
 from transformers import AutoModelForMultimodalLM, AutoProcessor
@@ -16,37 +15,40 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 PROMPT_TEMPLATE = """
-Describe this short news video using exactly one concise English sentence.
+Analyze this short news video clip and generate one concise English caption.
 
-Only describe visually supported people, actions, objects, locations,
-visible text, and important visual events.
-Do not infer information that is not clearly visible.
-Do not provide analysis, reasoning, bullet points, headings, or explanations.
+Describe only visually supported information.
 
-Return only:
-<caption>Your caption here.</caption>
+Focus on:
+- people
+- actions
+- objects
+- scene or location
+- visible text
+- important visual events
+
+Do not infer names, locations, or events unless they are clearly supported by the video.
 """
 
 class SegmentCaptioner:
     def __init__(self):
-        logger.info(f"Loading Qwen VLM ({config.VLM_MODEL_ID})... This may take a while and consume ~8GB VRAM.")
+        logger.info(f"Loading Qwen VLM ({config.VLM_MODEL_ID})... This may take a while and consume GPU memory.")
         try:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model = AutoModelForMultimodalLM.from_pretrained(
                 config.VLM_MODEL_ID,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                dtype=torch.float16,
                 device_map="auto",
-                attn_implementation="sdpa" if torch.cuda.is_available() else "eager",
-                trust_remote_code=True,
+                attn_implementation="sdpa",
             )
-            self.processor = AutoProcessor.from_pretrained(config.VLM_MODEL_ID, trust_remote_code=True)
+            self.processor = AutoProcessor.from_pretrained(config.VLM_MODEL_ID)
             
             # Constrain video length and resolution strictly to prevent OOM
             if hasattr(self.processor, "video_processor") and self.processor.video_processor is not None:
                 self.processor.video_processor.max_frames = config.VLM_MAX_VIDEO_FRAMES
                 self.processor.video_processor.size = {
                     "shortest_edge": 4_096,
-                    "longest_edge": 8_388_608, # Max pixel budget
+                    "longest_edge": config.VLM_MAX_VIDEO_PIXELS,
                 }
             logger.info("Qwen VLM loaded successfully.")
         except Exception as e:
@@ -65,49 +67,6 @@ class SegmentCaptioner:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         logger.info("Qwen VLM memory freed.")
-
-    @staticmethod
-    def extract_caption(text: str) -> str:
-        """Extract one final caption and reject reasoning-style model output."""
-        text = (text or "").strip()
-        if not text:
-            return ""
-
-        # Some Qwen templates can still emit a thinking block even when thinking is disabled.
-        if "</think>" in text:
-            text = text.rsplit("</think>", 1)[-1].strip()
-
-        match = re.search(
-            r"<caption>\s*(.*?)\s*</caption>",
-            text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        if match:
-            text = match.group(1)
-        else:
-            text = re.sub(
-                r"^(caption|description)\s*:\s*",
-                "",
-                text,
-                flags=re.IGNORECASE,
-            ).strip()
-
-            reasoning_markers = (
-                "identify the main",
-                "identify their",
-                "synthesize the description",
-                "the user wants",
-            )
-            looks_like_reasoning = (
-                any(marker in text.lower() for marker in reasoning_markers)
-                or bool(re.search(r"(^|\n)\s*\d+[.)]\s+", text))
-                or bool(re.search(r"(^|\n)\s*[-*]\s+", text))
-            )
-            if looks_like_reasoning:
-                return ""
-
-        text = re.sub(r"\s+", " ", text).strip()
-        return text if len(text.split()) <= 80 else ""
 
     def generate_caption(self, video_path: Path) -> str:
         """Takes a video path and generates a caption."""
@@ -129,18 +88,17 @@ class SegmentCaptioner:
                 tokenize=True,
                 return_dict=True,
                 return_tensors="pt",
-                enable_thinking=False,
             )
 
-            # Move to device
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items() if isinstance(v, torch.Tensor)}
+            inputs = inputs.to(self.model.device)
 
             with torch.inference_mode():
                 generated_ids = self.model.generate(
                     **inputs,
                     max_new_tokens=config.VLM_MAX_NEW_TOKENS,
-                    do_sample=False, # Use greedy decoding for factual descriptions
-                    temperature=0.0,
+                    do_sample=True,
+                    temperature=0.7,
+                    top_p=0.9,
                 )
 
             # Trim the prompt tokens from the output
@@ -153,13 +111,8 @@ class SegmentCaptioner:
                 generated_ids_trimmed,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=True,
-            )[0]
-            caption = self.extract_caption(output_text)
-            if not caption:
-                raise ValueError(
-                    f"Model did not return a valid caption. Raw output: {output_text[:500]}"
-                )
-            return caption
+            )
+            return output_text[0]
         except Exception as e:
             logger.error(f"Error generating caption for {video_path.name}: {e}")
             raise
