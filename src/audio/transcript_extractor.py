@@ -63,7 +63,7 @@ class TranscriptExtractor:
             if config.HF_TOKEN:
                 self.diarization_pipe = DiarizationPipeline.from_pretrained(
                     config.DIARIZATION_MODEL_ID,
-                    use_auth_token=config.HF_TOKEN
+                    token=config.HF_TOKEN
                 )
                 if torch.cuda.is_available():
                     self.diarization_pipe.to(torch.device("cuda"))
