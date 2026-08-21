@@ -432,3 +432,11 @@ class TranscriptExtractor:
         except Exception as e:
             logger.error(f"Failed to process video {video_id}: {e}")
             raise
+
+class TranscriptContext:
+    def __enter__(self):
+        self.extractor = TranscriptExtractor()
+        return self.extractor
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.extractor.free_memory()
