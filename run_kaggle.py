@@ -21,7 +21,7 @@ def free_memory():
         pass
     logger.info("Memory freed.")
 
-def find_raw_videos(raw_dir_path: str, limit: int = None) -> list:
+def find_raw_videos(raw_dir_path: str, offset: int = 0, limit: int = None) -> list:
     """Find all video files in raw_dir_path (supports .mp4, .mkv, .avi, .mov and subdirectories)."""
     raw_dir = Path(raw_dir_path)
     if not raw_dir.exists():
@@ -34,6 +34,8 @@ def find_raw_videos(raw_dir_path: str, limit: int = None) -> list:
         if f.is_file() and f.suffix in video_extensions
     ]
     video_files = sorted(video_files)
+    if offset > 0:
+        video_files = video_files[offset:]
     if limit and limit > 0:
         video_files = video_files[:limit]
     return video_files
@@ -65,11 +67,13 @@ def remove_batch_segment_videos(video_ids: list):
 def run_staged_pipeline(
     dry_run: bool = False,
     raw_dir: str = None,
+    offset: int = 0,
     limit: int = None,
     stage: str = "all",
     force: bool = False,
     video_batch_size: int = None,
     skip_transcript: bool = False,
+    cleanup_segments: bool = False,
 ):
     """
     Staged Execution Pipeline designed for Kaggle/Colab (VRAM < 16GB).
@@ -77,12 +81,14 @@ def run_staged_pipeline(
     Args:
         dry_run (bool): If True, only loads and unloads models to test environment/VRAM without processing videos.
         raw_dir (str): Custom directory containing raw video files.
+        offset (int): Number of videos to skip from the beginning.
         limit (int): Maximum number of videos to process (useful for quick testing).
         stage (str): 'all', '1'/'vad', '1.5'/'transcript', '2'/'dino',
             '3'/'vlm', '4'/'embed', '5'/'qdrant'
         force (bool): If True, forces re-processing even if checkpoints/outputs already exist.
         video_batch_size (int): Number of videos to run end-to-end per batch (defaults to config.VIDEO_BATCH_SIZE).
         skip_transcript (bool): If True, explicitly skips transcript extraction stage.
+        cleanup_segments (bool): If True, deletes intermediate .mp4 segments after a batch finishes to save disk space.
     """
     target_raw_dir = raw_dir if raw_dir else config.RAW_DIR
     stage = stage.lower()
@@ -144,7 +150,7 @@ def run_staged_pipeline(
         return
 
     # Discover videos
-    raw_videos = find_raw_videos(target_raw_dir, limit=limit)
+    raw_videos = find_raw_videos(target_raw_dir, offset=offset, limit=limit)
     if not raw_videos:
         logger.error(f"No video files found in RAW_DIR ('{target_raw_dir}').")
         logger.error("Please provide valid video files or use --raw-dir / AIC_RAW_DIR.")
@@ -229,6 +235,27 @@ def run_staged_pipeline(
                 logger.info(f"[{idx}/{len(batch_vids)}] Ingesting vectors to Qdrant for: {vid} ...")
                 db.upsert_video_embeddings(vid)
 
+            # CLEANUP: Remove video segments but keep audio
+            if cleanup_segments:
+                logger.info(f"--- [Batch {batch_idx}/{total_batches}] Cleanup: Extracting audio and deleting video segments ---")
+                import subprocess
+                for vid in batch_vids:
+                    seg_dir = Path(config.OUTPUT_DIR) / vid / "segments"
+                    if seg_dir.exists():
+                        for mp4_file in seg_dir.glob("*.mp4"):
+                            m4a_file = mp4_file.with_suffix(".m4a")
+                            try:
+                                # Extract audio without re-encoding (instantaneous)
+                                subprocess.run(
+                                    ["ffmpeg", "-y", "-i", str(mp4_file), "-vn", "-c:a", "copy", str(m4a_file)],
+                                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                                )
+                                # Delete the heavy video file
+                                mp4_file.unlink()
+                            except Exception as e:
+                                logger.error(f"Failed to extract audio for {mp4_file.name}: {e}")
+                        logger.info(f"Converted segments to .m4a and deleted .mp4 for {vid}")
+
             logger.info(f"✨ Batch {batch_idx}/{total_batches} completed and ingested into DB successfully!")
             remove_batch_segment_videos(batch_vids)
 
@@ -302,6 +329,7 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="Run in dry-run mode (tests model load/unload only)")
     parser.add_argument("--force", action="store_true", help="Force re-processing and overwrite existing checkpoints")
     parser.add_argument("--raw-dir", type=str, default=None, help="Custom path to raw videos directory")
+    parser.add_argument("--offset", type=int, default=0, help="Skip the first N videos (start from video N+1)")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of videos to process")
     parser.add_argument(
         "--video-batch-size", "--batch-size",
@@ -313,6 +341,11 @@ if __name__ == "__main__":
         "--no-transcript", "--skip-transcript",
         action="store_true",
         help="Skip Stage 1.5 transcript extraction in the pipeline",
+    )
+    parser.add_argument(
+        "--cleanup-segments",
+        action="store_true",
+        help="Delete intermediate .mp4 segments after processing a batch to save disk space",
     )
     parser.add_argument(
         "--stage",
@@ -334,9 +367,11 @@ if __name__ == "__main__":
     run_staged_pipeline(
         dry_run=args.dry_run,
         raw_dir=args.raw_dir,
+        offset=args.offset,
         limit=args.limit,
         stage=args.stage,
         force=args.force,
         video_batch_size=args.video_batch_size,
         skip_transcript=args.no_transcript,
+        cleanup_segments=args.cleanup_segments,
     )
