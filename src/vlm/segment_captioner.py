@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 import torch
 from pathlib import Path
 from transformers import AutoModelForMultimodalLM, AutoProcessor
@@ -15,10 +16,15 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 PROMPT_TEMPLATE = """
-Analyze this short news video clip and generate one concise English caption.
-Describe only visually supported information.
-Focus on: people, actions, objects, scene or location, visible text, important visual events.
-Do not infer names, locations, or events unless they are clearly supported by the video.
+Describe this short news video using exactly one concise English sentence.
+
+Only describe visually supported people, actions, objects, locations,
+visible text, and important visual events.
+Do not infer information that is not clearly visible.
+Do not provide analysis, reasoning, bullet points, headings, or explanations.
+
+Return only:
+<caption>Your caption here.</caption>
 """
 
 class SegmentCaptioner:
@@ -60,6 +66,49 @@ class SegmentCaptioner:
             torch.cuda.empty_cache()
         logger.info("Qwen VLM memory freed.")
 
+    @staticmethod
+    def extract_caption(text: str) -> str:
+        """Extract one final caption and reject reasoning-style model output."""
+        text = (text or "").strip()
+        if not text:
+            return ""
+
+        # Some Qwen templates can still emit a thinking block even when thinking is disabled.
+        if "</think>" in text:
+            text = text.rsplit("</think>", 1)[-1].strip()
+
+        match = re.search(
+            r"<caption>\s*(.*?)\s*</caption>",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            text = match.group(1)
+        else:
+            text = re.sub(
+                r"^(caption|description)\s*:\s*",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).strip()
+
+            reasoning_markers = (
+                "identify the main",
+                "identify their",
+                "synthesize the description",
+                "the user wants",
+            )
+            looks_like_reasoning = (
+                any(marker in text.lower() for marker in reasoning_markers)
+                or bool(re.search(r"(^|\n)\s*\d+[.)]\s+", text))
+                or bool(re.search(r"(^|\n)\s*[-*]\s+", text))
+            )
+            if looks_like_reasoning:
+                return ""
+
+        text = re.sub(r"\s+", " ", text).strip()
+        return text if len(text.split()) <= 80 else ""
+
     def generate_caption(self, video_path: Path) -> str:
         """Takes a video path and generates a caption."""
         messages = [
@@ -80,6 +129,7 @@ class SegmentCaptioner:
                 tokenize=True,
                 return_dict=True,
                 return_tensors="pt",
+                enable_thinking=False,
             )
 
             # Move to device
@@ -103,11 +153,16 @@ class SegmentCaptioner:
                 generated_ids_trimmed,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=True,
-            )
-            return output_text[0].strip()
+            )[0]
+            caption = self.extract_caption(output_text)
+            if not caption:
+                raise ValueError(
+                    f"Model did not return a valid caption. Raw output: {output_text[:500]}"
+                )
+            return caption
         except Exception as e:
             logger.error(f"Error generating caption for {video_path.name}: {e}")
-            return ""
+            raise
 
     def process_video(self, video_id: str, force: bool = False):
         """Generates captions for all segments of a video with checkpoint support."""
@@ -170,6 +225,7 @@ class SegmentCaptioner:
             logger.info(f"Successfully finished Captioning for {video_id}.")
         except Exception as e:
             logger.error(f"Caption generation failed for {video_id}: {e}")
+            raise
 
 # Context manager to ensure model cleanup
 class QwenCaptionerContext:
