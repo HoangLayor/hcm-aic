@@ -112,7 +112,11 @@ class TranscriptExtractor:
         # Pyannote expects a specific input format
         tensor = torch.from_numpy(audio_data).unsqueeze(0)
         try:
-            diarization = self.diarization_pipe({"waveform": tensor, "sample_rate": self.sample_rate})
+            diarization = self.diarization_pipe(
+                {"waveform": tensor, "sample_rate": self.sample_rate},
+                min_speakers=config.DIARIZATION_MIN_SPEAKERS,
+                max_speakers=config.DIARIZATION_MAX_SPEAKERS
+            )
             turns = []
             for turn, _, speaker in diarization.itertracks(yield_label=True):
                 turns.append((turn.start, turn.end, speaker))
