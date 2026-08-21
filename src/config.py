@@ -35,6 +35,10 @@ try:
         ASR_SAMPLE_RATE: int = Field(default=16000, description="PhoASR input sample rate.")
         ASR_MAX_SPEECH_SECONDS: float = Field(default=28.0, description="Maximum VAD speech region passed to PhoASR.")
         ASR_MIN_SPEECH_SECONDS: float = Field(default=0.35, description="Minimum VAD speech region passed to PhoASR.")
+        ASR_VAD_THRESHOLD: float = Field(default=0.50, description="Silero threshold used inside transcript extraction.")
+        ASR_VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum ASR speech-region duration.")
+        ASR_VAD_MIN_SILENCE_MS: int = Field(default=350, description="Minimum ASR silence duration, matching transcript.ipynb.")
+        ASR_VAD_SPEECH_PAD_MS: int = Field(default=300, description="ASR speech padding, matching transcript.ipynb.")
         DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-community-1"
         DIARIZATION_MIN_SPEAKERS: int = Field(default=1, description="Min speakers.")
         DIARIZATION_MAX_SPEAKERS: int = Field(default=6, description="Max speakers.")
@@ -97,6 +101,10 @@ except ImportError:
             ASR_SAMPLE_RATE: int = Field(default=16000, description="PhoASR input sample rate.")
             ASR_MAX_SPEECH_SECONDS: float = Field(default=28.0, description="Maximum VAD speech region passed to PhoASR.")
             ASR_MIN_SPEECH_SECONDS: float = Field(default=0.35, description="Minimum VAD speech region passed to PhoASR.")
+            ASR_VAD_THRESHOLD: float = Field(default=0.50, description="Silero threshold used inside transcript extraction.")
+            ASR_VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum ASR speech-region duration.")
+            ASR_VAD_MIN_SILENCE_MS: int = Field(default=350, description="Minimum ASR silence duration, matching transcript.ipynb.")
+            ASR_VAD_SPEECH_PAD_MS: int = Field(default=300, description="ASR speech padding, matching transcript.ipynb.")
             DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-community-1"
             HF_TOKEN: str = Field(default="", description="HuggingFace Token for Pyannote")
             
@@ -158,6 +166,10 @@ except ImportError:
             ASR_SAMPLE_RATE: int = int(os.getenv("AIC_ASR_SAMPLE_RATE", 16000))
             ASR_MAX_SPEECH_SECONDS: float = float(os.getenv("AIC_ASR_MAX_SPEECH_SECONDS", 28.0))
             ASR_MIN_SPEECH_SECONDS: float = float(os.getenv("AIC_ASR_MIN_SPEECH_SECONDS", 0.35))
+            ASR_VAD_THRESHOLD: float = float(os.getenv("AIC_ASR_VAD_THRESHOLD", 0.50))
+            ASR_VAD_MIN_SPEECH_DURATION_MS: int = int(os.getenv("AIC_ASR_VAD_MIN_SPEECH_DURATION_MS", 250))
+            ASR_VAD_MIN_SILENCE_MS: int = int(os.getenv("AIC_ASR_VAD_MIN_SILENCE_MS", 350))
+            ASR_VAD_SPEECH_PAD_MS: int = int(os.getenv("AIC_ASR_VAD_SPEECH_PAD_MS", 300))
             DIARIZATION_MODEL_ID: str = os.getenv("AIC_DIARIZATION_MODEL_ID", "pyannote/speaker-diarization-community-1")
             DIARIZATION_MIN_SPEAKERS: int = int(os.getenv("AIC_DIARIZATION_MIN_SPEAKERS", 1))
             DIARIZATION_MAX_SPEAKERS: int = int(os.getenv("AIC_DIARIZATION_MAX_SPEAKERS", 6))

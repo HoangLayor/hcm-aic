@@ -29,6 +29,13 @@ class TranscriptExtractor:
         self.pipeline_device = 0 if torch.cuda.is_available() else -1
         self.model_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
         self.sample_rate = config.ASR_SAMPLE_RATE
+        self.vad_kwargs = {
+            "threshold": config.ASR_VAD_THRESHOLD,
+            "min_speech_duration_ms": config.ASR_VAD_MIN_SPEECH_DURATION_MS,
+            "min_silence_duration_ms": config.ASR_VAD_MIN_SILENCE_MS,
+            "speech_pad_ms": config.ASR_VAD_SPEECH_PAD_MS,
+            "max_speech_duration_s": config.ASR_MAX_SPEECH_SECONDS,
+        }
 
         logger.info("Loading PhoASR (%s)...", config.ASR_MODEL_ID)
         self.processor = AutoProcessor.from_pretrained(config.ASR_MODEL_ID)
@@ -44,6 +51,15 @@ class TranscriptExtractor:
         ).to(self.device)
         self.asr_model.eval()
         self.asr_model.generation_config.forced_decoder_ids = None
+        generate_kwargs = {
+            "language": "vi",
+            "task": "transcribe",
+        }
+        # transcript.ipynb pins Transformers 4.48 and requests the legacy
+        # cache. Newer versions installed by the README removed that option,
+        # so enable it only when the loaded generation config supports it.
+        if hasattr(self.asr_model.generation_config, "return_legacy_cache"):
+            generate_kwargs["return_legacy_cache"] = True
         self.asr_pipe = pipeline(
             task="automatic-speech-recognition",
             model=self.asr_model,
@@ -51,10 +67,7 @@ class TranscriptExtractor:
             feature_extractor=self.processor.feature_extractor,
             chunk_length_s=30,
             return_timestamps="word",
-            generate_kwargs={
-                "language": "vi",
-                "task": "transcribe",
-            },
+            generate_kwargs=generate_kwargs,
             torch_dtype=self.model_dtype,
             device=self.pipeline_device,
         )
@@ -68,6 +81,7 @@ class TranscriptExtractor:
             self.vad_model = load_silero_vad(onnx=False)
             vad_backend = "TorchScript (CPU)"
         logger.info("PhoASR and Silero VAD loaded [%s].", vad_backend)
+        logger.info("Transcript VAD parameters: %s", self.vad_kwargs)
 
         os.environ["PYANNOTE_METRICS_ENABLED"] = "0"
         from pyannote.audio import Pipeline as DiarizationPipeline
@@ -382,7 +396,12 @@ class TranscriptExtractor:
                 "start_sec": self.round_sec(local_start),
                 "end_sec": self.round_sec(local_end),
             }]
-        return {"text": text, "words": words}
+        return {
+            "start_sec": self.round_sec(local_start),
+            "end_sec": self.round_sec(local_end),
+            "text": text,
+            "words": words,
+        }
 
     def process_segment(self, segment_meta: dict, video_dir: Path) -> dict:
         segment_id = segment_meta["segment_id"]
@@ -394,16 +413,12 @@ class TranscriptExtractor:
             torch.from_numpy(audio_data),
             self.vad_model,
             sampling_rate=self.sample_rate,
-            threshold=config.VAD_THRESHOLD,
-            min_speech_duration_ms=config.VAD_MIN_SPEECH_DURATION_MS,
-            min_silence_duration_ms=config.VAD_MIN_SILENCE_MS,
-            speech_pad_ms=config.VAD_SPEECH_PAD_MS,
-            max_speech_duration_s=config.ASR_MAX_SPEECH_SECONDS,
+            **self.vad_kwargs,
             return_seconds=False,
         )
 
         speaker_turns = self.run_diarization(audio_data) if vad_regions else []
-        words = []
+        utterances = []
         for region in vad_regions:
             utterance = self.transcribe_speech_region(
                 audio_data, int(region["start"]), int(region["end"])
@@ -414,9 +429,16 @@ class TranscriptExtractor:
                 word["speaker"] = self.assign_speaker(
                     word["start_sec"], word["end_sec"], speaker_turns
                 )
-            words.extend(utterance["words"])
+            utterances.append(utterance)
 
-        sentences = self.build_scored_sentences(audio_data, words)
+        # Keep VAD utterances isolated while splitting/scoring sentences, as in
+        # transcript.ipynb. This prevents words from separate ASR calls from
+        # being merged into one sentence when the inter-region pause is short.
+        sentences = []
+        for utterance in utterances:
+            sentences.extend(
+                self.build_scored_sentences(audio_data, utterance.get("words", []))
+            )
         turns = self.group_sentences_into_turns(sentences)
         full_text = self.flatten_transcript(turns)
         start = self.round_sec(segment_meta.get("start_time_sec", 0.0))
