@@ -24,10 +24,9 @@ try:
         
         # 1. VAD & Splitter Configuration
         VAD_MAX_SEGMENT_DURATION_SEC: int = Field(default=30, description="Maximum duration per segment in seconds.")
-        VAD_MIN_SILENCE_MS: int = Field(default=350, description="Minimum silence duration to trigger split.")
+        VAD_MIN_SILENCE_MS: int = Field(default=1000, description="Minimum silence duration to trigger split.")
         VAD_THRESHOLD: float = Field(default=0.5, description="Silence detection threshold.")
         VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum speech duration.")
-        VAD_SPEECH_PAD_MS: int = Field(default=300, description="Pad speech to avoid cutting words.")
         
         # 1.5. Transcript & Diarization Configuration
         ASR_MODEL_ID: str = "Qualcomm-AI-Research/PhoASR-whisper-small"
