@@ -20,8 +20,8 @@ try:
         
         QDRANT_URL: str = Field(default="https://4ae329d5-5ea2-466b-a1a4-ff1d8754a68a.sa-east-1-0.aws.cloud.qdrant.io", description="Qdrant Cloud URL.")
         QDRANT_API_KEY: str = Field(default="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIiwic3ViamVjdCI6ImFwaS1rZXk6ZDYyZjRkYmItYjU4Yi00ODhhLTk4ZDEtY2FiNzAwNmNmOTJjIn0.RDCtpTqEcEH5BnV3FKiRQo3J1SjzOYj0KtM00yK_H44", description="Qdrant Cloud API Key.")
-        QDRANT_KEYFRAME_COLLECTION: str = Field(default="keyframes", description="Target Qdrant Collection for Keyframes.")
-        QDRANT_CAPTION_COLLECTION: str = Field(default="captions", description="Target Qdrant Collection for Captions.")
+        QDRANT_KEYFRAME_COLLECTION: str = Field(default="keyframes_v2", description="Target Qdrant Collection for Keyframes.")
+        QDRANT_CAPTION_COLLECTION: str = Field(default="captions_v2", description="Target Qdrant Collection for Captions.")
         
         # 1. VAD & Splitter Configuration
         VAD_MAX_SEGMENT_DURATION_SEC: int = Field(default=30, description="Maximum duration per segment in seconds.")

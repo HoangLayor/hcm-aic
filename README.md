@@ -111,45 +111,6 @@ Hệ thống sẽ tự động xử lý trọn gói (End-to-End) 5 video mỗi �
 !python run_kaggle.py --stage qdrant    # Chỉ chạy Stage 5 (Qdrant Ingestion)
 ```
 
-### Bước 2.3: Sao lưu từng batch lên Google Drive cá nhân và dọn ổ đĩa
-
-Pipeline hỗ trợ `rclone` để upload toàn bộ `output/<video_id>/` của một batch sau
-khi Stage 5 đã nạp vector vào Qdrant. Với hai cờ bên dưới, chương trình chỉ xóa
-output cục bộ khi **toàn bộ batch đã upload và được kiểm tra thành công**.
-`qdrant_db` và video gốc không bị xóa.
-
-1. Cài và kết nối Google Drive cá nhân với `rclone`. Có thể chạy cấu hình này trên
-máy cá nhân (dễ đăng nhập bằng trình duyệt) hoặc trực tiếp trong notebook:
-
-```bash
-!sudo apt-get update -qq && sudo apt-get install -y rclone
-!rclone config
-```
-
-Trong màn hình cấu hình, chọn `n` để tạo remote, đặt tên là `gdrive`, chọn loại
-storage là `drive`, và đăng nhập tài khoản Google cá nhân khi `rclone` đưa link
-xác thực. Kiểm tra kết nối:
-
-```bash
-!rclone lsd gdrive:
-```
-
-2. Chạy pipeline. Ví dụ dưới đây xử lý 5 video/batch, upload lần lượt vào thư mục
-`aic-output/<video_id>/` trên Drive, xác minh các file, rồi mới xóa output của batch:
-
-```bash
-!python run_kaggle.py \
-  --raw-dir /kaggle/input/datasets/dotrantu/aic-10-video/Segment_Video \
-  --batch-size 5 \
-  --drive-destination gdrive:aic-output \
-  --delete-local-after-upload
-```
-
-Nếu chỉ muốn backup mà vẫn giữ output local, bỏ cờ `--delete-local-after-upload`.
-Không đưa file cấu hình `rclone.conf` hoặc token Google vào Git/notebook công khai.
-Với Kaggle, hãy lưu cấu hình đó trong Secret/Dataset private rồi chép vào
-`~/.config/rclone/rclone.conf` trước khi chạy.
-
 ---
 
 ## 3. Cấu hình & Biến môi trường (Environment Variables)
@@ -241,7 +202,7 @@ Nếu bạn có quỹ thời gian nộp bài eo hẹp và cần xử lý hàng n
    !rm -rf /kaggle/working/qdrant_db
    ```
 2. **Xóa video trung gian sau khi đã nạp Qdrant để tiết kiệm ổ đĩa Kaggle**:
-   Do Kaggle chỉ có 20GB ổ cứng, sau khi hoàn tất Stage 5 cho 1 batch, bạn có thể xóa thư mục `output/<video_id>/segments/` để giải phóng dung lượng đĩa trước khi xử lý batch tiếp theo.
+   Sau khi hoàn tất Stage 5 cho toàn bộ một batch, pipeline tự động xóa các file `output/<video_id>/segments/*.mp4` của batch đó để giải phóng dung lượng đĩa. File `manifest_vad.json` và các metadata khác vẫn được giữ lại.
 3. **Multiprocessing cho VAD (Sử dụng 100% CPU)**:
    Quá trình dùng FFmpeg cắt video có thể sử dụng `concurrent.futures.ProcessPoolExecutor` trong file `vad_splitter.py` để cắt nhiều đoạn video cùng lúc tận dụng 4 lõi CPU của Kaggle.
 4. **Lượng tử hóa Mô hình (Quantization 4-bit / 8-bit)**:
