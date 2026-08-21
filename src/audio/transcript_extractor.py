@@ -54,7 +54,6 @@ class TranscriptExtractor:
             generate_kwargs={
                 "language": "vi",
                 "task": "transcribe",
-                "return_legacy_cache": True,
             },
             torch_dtype=self.model_dtype,
             device=self.pipeline_device,
