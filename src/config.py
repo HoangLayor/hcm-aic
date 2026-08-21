@@ -10,7 +10,7 @@ try:
 
         # Global Pipeline Settings
         TARGET_FPS: int = Field(default=30, description="Target FPS to avoid frame drift.")
-        USE_TRANSCRIPT_BRANCH: bool = Field(default=False, description="Enable ASR transcript collection.")
+        USE_TRANSCRIPT_BRANCH: bool = Field(default=True, description="Enable ASR transcript collection in the all-stage pipeline.")
         
         # Storage Paths
         RAW_DIR: str = Field(default="./data", description="Directory containing raw MP4 video files.")
@@ -31,6 +31,9 @@ try:
         
         # 1.5. Transcript & Diarization Configuration
         ASR_MODEL_ID: str = "Qualcomm-AI-Research/PhoASR-whisper-small"
+        ASR_SAMPLE_RATE: int = Field(default=16000, description="PhoASR input sample rate.")
+        ASR_MAX_SPEECH_SECONDS: float = Field(default=28.0, description="Maximum VAD speech region passed to PhoASR.")
+        ASR_MIN_SPEECH_SECONDS: float = Field(default=0.35, description="Minimum VAD speech region passed to PhoASR.")
         DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-community-1"
         DIARIZATION_MIN_SPEAKERS: int = Field(default=1, description="Min speakers.")
         DIARIZATION_MAX_SPEAKERS: int = Field(default=6, description="Max speakers.")
@@ -69,7 +72,7 @@ except ImportError:
 
         class AppConfig(BaseSettings):
             TARGET_FPS: int = Field(default=30, description="Target FPS to avoid frame drift.")
-            USE_TRANSCRIPT_BRANCH: bool = Field(default=False, description="Enable ASR transcript collection.")
+            USE_TRANSCRIPT_BRANCH: bool = Field(default=True, description="Enable ASR transcript collection in the all-stage pipeline.")
             
             RAW_DIR: str = Field(default="./data", description="Directory containing raw MP4 video files.")
             OUTPUT_DIR: str = Field(default="./output", description="Directory to store intermediate artifacts.")
@@ -81,9 +84,17 @@ except ImportError:
             QDRANT_CAPTION_COLLECTION: str = Field(default="captions", description="Target Qdrant Collection for Captions.")
             
             VAD_MAX_SEGMENT_DURATION_SEC: int = Field(default=30, description="Maximum duration per segment in seconds.")
-            VAD_MIN_SILENCE_MS: int = Field(default=1000, description="Minimum silence duration to trigger split.")
+            VAD_MIN_SILENCE_MS: int = Field(default=350, description="Minimum silence duration to trigger split.")
             VAD_THRESHOLD: float = Field(default=0.5, description="Silence detection threshold.")
             VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum speech duration.")
+            VAD_SPEECH_PAD_MS: int = Field(default=300, description="Pad speech to avoid cutting words.")
+
+            ASR_MODEL_ID: str = "Qualcomm-AI-Research/PhoASR-whisper-small"
+            ASR_SAMPLE_RATE: int = Field(default=16000, description="PhoASR input sample rate.")
+            ASR_MAX_SPEECH_SECONDS: float = Field(default=28.0, description="Maximum VAD speech region passed to PhoASR.")
+            ASR_MIN_SPEECH_SECONDS: float = Field(default=0.35, description="Minimum VAD speech region passed to PhoASR.")
+            DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-community-1"
+            HF_TOKEN: str = Field(default="", description="HuggingFace Token for Pyannote")
             
             DIARIZATION_MIN_SPEAKERS: int = Field(default=1, description="Min speakers.")
             DIARIZATION_MAX_SPEAKERS: int = Field(default=6, description="Max speakers.")
@@ -120,7 +131,7 @@ except ImportError:
 
         class AppConfig(BaseModel):
             TARGET_FPS: int = int(os.getenv("AIC_TARGET_FPS", 30))
-            USE_TRANSCRIPT_BRANCH: bool = os.getenv("AIC_USE_TRANSCRIPT_BRANCH", "False").lower() in ("true", "1")
+            USE_TRANSCRIPT_BRANCH: bool = os.getenv("AIC_USE_TRANSCRIPT_BRANCH", "True").lower() in ("true", "1")
             
             RAW_DIR: str = os.getenv("AIC_RAW_DIR", "./data")
             OUTPUT_DIR: str = os.getenv("AIC_OUTPUT_DIR", "./output")
@@ -132,9 +143,26 @@ except ImportError:
             QDRANT_CAPTION_COLLECTION: str = os.getenv("AIC_QDRANT_CAPTION_COLLECTION", "captions")
             
             VAD_MAX_SEGMENT_DURATION_SEC: int = int(os.getenv("AIC_VAD_MAX_SEGMENT_DURATION_SEC", 30))
-            VAD_MIN_SILENCE_MS: int = int(os.getenv("AIC_VAD_MIN_SILENCE_MS", 1000))
+            VAD_MIN_SILENCE_MS: int = int(os.getenv("AIC_VAD_MIN_SILENCE_MS", 350))
             VAD_THRESHOLD: float = float(os.getenv("AIC_VAD_THRESHOLD", 0.5))
             VAD_MIN_SPEECH_DURATION_MS: int = int(os.getenv("AIC_VAD_MIN_SPEECH_DURATION_MS", 250))
+            VAD_SPEECH_PAD_MS: int = int(os.getenv("AIC_VAD_SPEECH_PAD_MS", 300))
+
+            ASR_MODEL_ID: str = os.getenv("AIC_ASR_MODEL_ID", "Qualcomm-AI-Research/PhoASR-whisper-small")
+            ASR_SAMPLE_RATE: int = int(os.getenv("AIC_ASR_SAMPLE_RATE", 16000))
+            ASR_MAX_SPEECH_SECONDS: float = float(os.getenv("AIC_ASR_MAX_SPEECH_SECONDS", 28.0))
+            ASR_MIN_SPEECH_SECONDS: float = float(os.getenv("AIC_ASR_MIN_SPEECH_SECONDS", 0.35))
+            DIARIZATION_MODEL_ID: str = os.getenv("AIC_DIARIZATION_MODEL_ID", "pyannote/speaker-diarization-community-1")
+            DIARIZATION_MIN_SPEAKERS: int = int(os.getenv("AIC_DIARIZATION_MIN_SPEAKERS", 1))
+            DIARIZATION_MAX_SPEAKERS: int = int(os.getenv("AIC_DIARIZATION_MAX_SPEAKERS", 6))
+            HF_TOKEN: str = os.getenv("AIC_HF_TOKEN", "")
+
+            TURN_MERGE_GAP_SEC: float = float(os.getenv("AIC_TURN_MERGE_GAP_SEC", 1.5))
+            QUALITY_RELIABLE_MIN_CONFIDENCE: float = float(os.getenv("AIC_QUALITY_RELIABLE_MIN_CONFIDENCE", 0.70))
+            QUALITY_NCR_MAX_CONFIDENCE: float = float(os.getenv("AIC_QUALITY_NCR_MAX_CONFIDENCE", 0.50))
+            CONFIDENCE_AUDIO_PAD_SEC: float = float(os.getenv("AIC_CONFIDENCE_AUDIO_PAD_SEC", 0.15))
+            SENTENCE_PAUSE_SEC: float = float(os.getenv("AIC_SENTENCE_PAUSE_SEC", 0.85))
+            MAX_SENTENCE_SEC: float = float(os.getenv("AIC_MAX_SENTENCE_SEC", 18.0))
             
             DINO_MODEL_ID: str = os.getenv("AIC_DINO_MODEL_ID", "dinov2_vitb14")
             DINO_BATCH_SIZE: int = int(os.getenv("AIC_DINO_BATCH_SIZE", 16))

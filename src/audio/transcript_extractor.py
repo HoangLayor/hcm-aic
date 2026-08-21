@@ -1,134 +1,163 @@
-import os
 import gc
 import json
 import logging
-import subprocess
+import os
 import re
-import torch
-import numpy as np
-import soundfile as sf
+import shutil
+import subprocess
 from pathlib import Path
+
+import numpy as np
+import torch
+from silero_vad import get_speech_timestamps, load_silero_vad
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
 from src.config import config
 
+
 logger = logging.getLogger("TranscriptExtractor")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    ch = logging.StreamHandler()
-    ch.setFormatter(logging.Formatter('[%(levelname)s] %(asctime)s - %(message)s'))
-    logger.addHandler(ch)
+
 
 class TranscriptExtractor:
+    """PhoASR + Silero VAD + pyannote pipeline ported from transcript.ipynb."""
+
     def __init__(self):
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError("ffmpeg was not found in PATH.")
+
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         self.pipeline_device = 0 if torch.cuda.is_available() else -1
         self.model_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-        self.sample_rate = 16000
-        
-        logger.info(f"Loading PhoASR ({config.ASR_MODEL_ID})...")
-        try:
-            self.processor = AutoProcessor.from_pretrained(config.ASR_MODEL_ID)
-            self.processor.feature_extractor.return_attention_mask = True
-            self.asr_model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                config.ASR_MODEL_ID,
-                torch_dtype=self.model_dtype,
-                low_cpu_mem_usage=True,
-                use_safetensors=True,
-                attn_implementation="sdpa" if torch.cuda.is_available() else "eager",
-            ).to(self.device)
-            self.asr_model.eval()
-            self.asr_model.generation_config.forced_decoder_ids = None
+        self.sample_rate = config.ASR_SAMPLE_RATE
 
-            self.asr_pipe = pipeline(
-                task="automatic-speech-recognition",
-                model=self.asr_model,
-                tokenizer=self.processor.tokenizer,
-                feature_extractor=self.processor.feature_extractor,
-                chunk_length_s=30,
-                return_timestamps="word",
-                generate_kwargs={"language": "vi", "task": "transcribe", "return_legacy_cache": True},
-                torch_dtype=self.model_dtype,
-                device=self.pipeline_device,
+        logger.info("Loading PhoASR (%s)...", config.ASR_MODEL_ID)
+        self.processor = AutoProcessor.from_pretrained(config.ASR_MODEL_ID)
+        # Whisper has pad_token == eos_token, so the feature extractor must emit a mask.
+        self.processor.feature_extractor.return_attention_mask = True
+        self.asr_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            config.ASR_MODEL_ID,
+            torch_dtype=self.model_dtype,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            # Keep this identical to the notebook. SDPA can change PhoASR behaviour.
+            attn_implementation="eager",
+        ).to(self.device)
+        self.asr_model.eval()
+        self.asr_model.generation_config.forced_decoder_ids = None
+        self.asr_pipe = pipeline(
+            task="automatic-speech-recognition",
+            model=self.asr_model,
+            tokenizer=self.processor.tokenizer,
+            feature_extractor=self.processor.feature_extractor,
+            chunk_length_s=30,
+            return_timestamps="word",
+            generate_kwargs={
+                "language": "vi",
+                "task": "transcribe",
+                "return_legacy_cache": True,
+            },
+            torch_dtype=self.model_dtype,
+            device=self.pipeline_device,
+        )
+
+        # Use ONNX VAD on CPU first, as in the notebook, and preserve TorchScript fallback.
+        try:
+            self.vad_model = load_silero_vad(onnx=True)
+            vad_backend = "ONNX Runtime (CPU)"
+        except Exception as exc:
+            logger.warning("Could not initialize ONNX VAD (%s); using TorchScript.", exc)
+            self.vad_model = load_silero_vad(onnx=False)
+            vad_backend = "TorchScript (CPU)"
+        logger.info("PhoASR and Silero VAD loaded [%s].", vad_backend)
+
+        os.environ["PYANNOTE_METRICS_ENABLED"] = "0"
+        from pyannote.audio import Pipeline as DiarizationPipeline
+
+        hf_token = self._resolve_hf_token()
+        if not hf_token:
+            raise RuntimeError(
+                "HF_TOKEN is required for pyannote speaker-diarization-community-1. "
+                "Set AIC_HF_TOKEN/HF_TOKEN or add HF_TOKEN to Kaggle Secrets."
             )
-            logger.info("PhoASR loaded successfully.")
-        except Exception as e:
-            logger.error(f"Failed to load PhoASR: {e}")
-            raise
 
-        logger.info(f"Loading Pyannote Diarization ({config.DIARIZATION_MODEL_ID})...")
+        logger.info("Loading pyannote diarization (%s)...", config.DIARIZATION_MODEL_ID)
+        self.diarization_pipe = DiarizationPipeline.from_pretrained(
+            config.DIARIZATION_MODEL_ID,
+            token=hf_token,
+        )
+        if self.diarization_pipe is None:
+            raise RuntimeError(
+                "Could not load pyannote diarization. Check HF_TOKEN and accept the model terms."
+            )
+        self.diarization_pipe.to(torch.device(self.device))
+        logger.info("Pyannote diarization loaded.")
+
+    @staticmethod
+    def _resolve_hf_token():
+        token = config.HF_TOKEN or os.environ.get("HF_TOKEN")
+        if token:
+            return token
         try:
-            os.environ["PYANNOTE_METRICS_ENABLED"] = "0"
-            from pyannote.audio import Pipeline as DiarizationPipeline
-            if config.HF_TOKEN:
-                self.diarization_pipe = DiarizationPipeline.from_pretrained(
-                    config.DIARIZATION_MODEL_ID,
-                    use_auth_token=config.HF_TOKEN
-                )
-                if torch.cuda.is_available():
-                    self.diarization_pipe.to(torch.device("cuda"))
-                logger.info("Pyannote loaded successfully.")
-            else:
-                self.diarization_pipe = None
-                logger.warning("No HF_TOKEN provided. Diarization will be disabled.")
-        except Exception as e:
-            logger.error(f"Failed to load Pyannote: {e}")
-            self.diarization_pipe = None
+            from kaggle_secrets import UserSecretsClient
+
+            return UserSecretsClient().get_secret("HF_TOKEN")
+        except Exception:
+            return None
 
     def free_memory(self):
-        """Explicitly clear ASR and Diarization models from VRAM."""
-        if hasattr(self, 'asr_pipe'):
-            del self.asr_pipe
-        if hasattr(self, 'asr_model'):
-            del self.asr_model
-        if hasattr(self, 'processor'):
-            del self.processor
-        if hasattr(self, 'diarization_pipe'):
-            del self.diarization_pipe
-            
+        """Explicitly clear ASR, VAD and diarization models from memory."""
+        for name in ("asr_pipe", "asr_model", "processor", "vad_model", "diarization_pipe"):
+            if hasattr(self, name):
+                delattr(self, name)
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         logger.info("Transcript models memory freed.")
 
     def extract_audio(self, video_path: Path) -> np.ndarray:
-        """Extracts audio to numpy array using ffmpeg."""
+        """Decode a video directly to mono float32 16 kHz without a temporary WAV."""
         cmd = [
-            "ffmpeg", "-y", "-i", str(video_path),
-            "-vn", "-acodec", "pcm_f32le", "-ar", str(self.sample_rate), "-ac", "1",
-            "-f", "f32le", "-"
+            "ffmpeg", "-nostdin", "-v", "error", "-i", str(video_path),
+            "-vn", "-ac", "1", "-ar", str(self.sample_rate),
+            "-f", "f32le", "pipe:1",
         ]
         process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if process.returncode != 0:
-            logger.error(f"FFmpeg audio extraction failed: {process.stderr.decode('utf-8', errors='ignore')}")
-            return np.array([])
-        
-        audio = np.frombuffer(process.stdout, dtype=np.float32)
+            error = process.stderr.decode("utf-8", errors="replace")[-2000:]
+            raise RuntimeError(f"ffmpeg failed for {video_path}: {error}")
+        audio = np.frombuffer(process.stdout, dtype=np.float32).copy()
+        if audio.size == 0:
+            raise ValueError(f"Video has no audio: {video_path}")
         return audio
 
-    def run_diarization(self, audio_data: np.ndarray) -> list:
-        if not self.diarization_pipe or len(audio_data) == 0:
-            return []
-            
-        # Pyannote expects a specific input format
-        tensor = torch.from_numpy(audio_data).unsqueeze(0)
-        try:
-            diarization = self.diarization_pipe(
-                {"waveform": tensor, "sample_rate": self.sample_rate},
-                min_speakers=config.DIARIZATION_MIN_SPEAKERS,
-                max_speakers=config.DIARIZATION_MAX_SPEAKERS
-            )
-            turns = []
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
-                turns.append((float(turn.start), float(turn.end), str(speaker)))
-            return turns
-        except Exception as e:
-            logger.error(f"Diarization failed: {e}")
-            return []
+    @staticmethod
+    def collect_speaker_turns(annotation) -> list:
+        if hasattr(annotation, "itertracks"):
+            return [
+                (float(turn.start), float(turn.end), str(speaker))
+                for turn, _, speaker in annotation.itertracks(yield_label=True)
+            ]
+        return [
+            (float(turn.start), float(turn.end), str(speaker))
+            for turn, speaker in annotation
+        ]
 
-    # =========================================================================
-    # POST-PROCESSING METHODS (SYNCED FROM RAW SCRIPT)
-    # =========================================================================
+    def run_diarization(self, audio_data: np.ndarray) -> list:
+        if audio_data.size == 0:
+            return []
+        output = self.diarization_pipe(
+            {
+                "waveform": torch.from_numpy(audio_data).unsqueeze(0),
+                "sample_rate": self.sample_rate,
+            },
+            min_speakers=config.DIARIZATION_MIN_SPEAKERS,
+            max_speakers=config.DIARIZATION_MAX_SPEAKERS,
+        )
+        # Community-1 exposes non-overlapping turns, which are preferred by the notebook.
+        annotation = getattr(output, "exclusive_speaker_diarization", None)
+        if annotation is None:
+            annotation = output.speaker_diarization
+        return self.collect_speaker_turns(annotation)
 
     @staticmethod
     def clean_text(text: str) -> str:
@@ -139,14 +168,29 @@ class TranscriptExtractor:
     def round_sec(value: float) -> float:
         return round(float(value), 3)
 
-    def score_sentence_confidence(self, audio: np.ndarray, text: str, start_sec: float, end_sec: float):
-        """Teacher-forced token log-probability of PhoASR for a single sentence."""
+    @staticmethod
+    def atomic_write_text(path: Path, content: str):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_suffix(path.suffix + ".tmp")
+        temp_path.write_text(content, encoding="utf-8")
+        os.replace(temp_path, path)
+
+    @classmethod
+    def atomic_write_json(cls, path: Path, data: dict):
+        cls.atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2))
+
+    def score_sentence_confidence(
+        self, audio: np.ndarray, text: str, start_sec: float, end_sec: float
+    ):
+        """Teacher-forced token log-probability for one PhoASR sentence."""
         padded_start = max(0.0, float(start_sec) - config.CONFIDENCE_AUDIO_PAD_SEC)
-        padded_end = min(len(audio) / self.sample_rate, float(end_sec) + config.CONFIDENCE_AUDIO_PAD_SEC)
+        padded_end = min(
+            len(audio) / self.sample_rate,
+            float(end_sec) + config.CONFIDENCE_AUDIO_PAD_SEC,
+        )
         start_sample = int(round(padded_start * self.sample_rate))
         end_sample = int(round(padded_end * self.sample_rate))
         sentence_audio = audio[start_sample:end_sample]
-        
         if sentence_audio.size == 0 or not text.strip():
             return None
 
@@ -166,7 +210,6 @@ class TranscriptExtractor:
         text_ids = self.processor.tokenizer.encode(text, add_special_tokens=False)
         if not text_ids:
             return None
-            
         label_ids = prompt_ids + text_ids + [self.processor.tokenizer.eos_token_id]
         labels = torch.tensor([label_ids], dtype=torch.long, device=self.device)
 
@@ -182,7 +225,6 @@ class TranscriptExtractor:
         text_scores = chosen[len(prompt_ids):len(prompt_ids) + len(text_ids)]
         if text_scores.numel() == 0:
             return None
-            
         avg_logprob = float(text_scores.mean().item())
         return {
             "avg_logprob": round(avg_logprob, 4),
@@ -194,6 +236,7 @@ class TranscriptExtractor:
         current = []
 
         def flush():
+            nonlocal current
             if not current:
                 return
             sentence = {
@@ -207,7 +250,7 @@ class TranscriptExtractor:
             if speakers:
                 sentence["speaker"] = max(set(speakers), key=speakers.count)
             sentences.append(sentence)
-            current.clear()
+            current = []
 
         for word in words:
             if current:
@@ -219,14 +262,15 @@ class TranscriptExtractor:
                 ):
                     flush()
             current.append(dict(word))
-            stripped = word.get("text", "").strip().rstrip('"”\')]}')
+            stripped = word.get("text", "").strip().rstrip('"”’)]}')
             duration = float(current[-1]["end_sec"]) - float(current[0]["start_sec"])
             if stripped.endswith((".", "!", "?", "…")) or duration >= config.MAX_SENTENCE_SEC:
                 flush()
         flush()
-        return [x for x in sentences if x["text"]]
+        return [sentence for sentence in sentences if sentence["text"]]
 
-    def classify_transcript_quality(self, confidence: float) -> str:
+    @staticmethod
+    def classify_transcript_quality(confidence: float) -> str:
         if confidence is None:
             return "REVIEW"
         if confidence < config.QUALITY_NCR_MAX_CONFIDENCE:
@@ -247,12 +291,8 @@ class TranscriptExtractor:
             except Exception as exc:
                 confidence_error = f"{type(exc).__name__}: {exc}"
 
-            if metrics is not None:
-                sentence.update(metrics)
-            else:
-                sentence.update({"avg_logprob": None, "confidence": None})
-                
-            sentence["quality"] = self.classify_transcript_quality(sentence.get("confidence"))
+            sentence.update(metrics or {"avg_logprob": None, "confidence": None})
+            sentence["quality"] = self.classify_transcript_quality(sentence["confidence"])
             if confidence_error:
                 sentence["confidence_error"] = confidence_error
         return sentences
@@ -309,129 +349,165 @@ class TranscriptExtractor:
         midpoint = (float(start) + float(end)) / 2
         return min(
             speaker_turns,
-            key=lambda x: 0.0 if x[0] <= midpoint <= x[1]
-            else min(abs(midpoint - x[0]), abs(midpoint - x[1])),
+            key=lambda turn: 0.0 if turn[0] <= midpoint <= turn[1]
+            else min(abs(midpoint - turn[0]), abs(midpoint - turn[1])),
         )[2]
 
-    # =========================================================================
+    def transcribe_speech_region(
+        self, audio_data: np.ndarray, start_sample: int, end_sample: int
+    ):
+        region = audio_data[start_sample:end_sample]
+        region_duration = len(region) / self.sample_rate
+        if region_duration < config.ASR_MIN_SPEECH_SECONDS:
+            return None
 
-    def transcribe_words(self, audio_data: np.ndarray) -> list:
-        if len(audio_data) == 0:
-            return []
-            
-        try:
-            result = self.asr_pipe({"array": audio_data, "sampling_rate": self.sample_rate})
-            text = self.clean_text(result.get("text", ""))
-            
-            region_duration = len(audio_data) / self.sample_rate
-            words = []
-            
-            for chunk in result.get("chunks", []):
-                timestamp = chunk.get("timestamp") or (None, None)
-                word_start = 0.0 if timestamp[0] is None else float(timestamp[0])
-                word_end = region_duration if timestamp[1] is None else float(timestamp[1])
-                words.append({
-                    "text": chunk.get("text", ""),
-                    "start_sec": self.round_sec(word_start),
-                    "end_sec": self.round_sec(min(word_end, region_duration)),
-                })
+        result = self.asr_pipe({"array": region, "sampling_rate": self.sample_rate})
+        text = self.clean_text(result.get("text", ""))
+        local_start = start_sample / self.sample_rate
+        local_end = end_sample / self.sample_rate
 
-            if text and not words:
-                words = [{
-                    "text": text,
-                    "start_sec": 0.0,
-                    "end_sec": self.round_sec(region_duration),
-                }]
-                
-            return words
-        except Exception as e:
-            logger.error(f"Transcription failed: {e}")
-            return []
+        words = []
+        for chunk in result.get("chunks", []):
+            timestamp = chunk.get("timestamp") or (None, None)
+            word_start = 0.0 if timestamp[0] is None else float(timestamp[0])
+            word_end = region_duration if timestamp[1] is None else float(timestamp[1])
+            words.append({
+                "text": chunk.get("text", ""),
+                "start_sec": self.round_sec(local_start + word_start),
+                "end_sec": self.round_sec(min(local_start + word_end, local_end)),
+            })
 
-    def process_segment(self, segment_meta: dict, video_dir: Path):
-        segment_id = segment_meta['segment_id']
-        segment_file = Path(segment_meta['file_path'])
-        
-        logger.info(f"Processing Transcript for {segment_id}...")
-        
+        if text and not words:
+            words = [{
+                "text": text,
+                "start_sec": self.round_sec(local_start),
+                "end_sec": self.round_sec(local_end),
+            }]
+        return {"text": text, "words": words}
+
+    def process_segment(self, segment_meta: dict, video_dir: Path) -> dict:
+        segment_id = segment_meta["segment_id"]
+        segment_file = Path(segment_meta["file_path"])
+        logger.info("Processing transcript for %s...", segment_id)
+
         audio_data = self.extract_audio(segment_file)
-        if len(audio_data) == 0:
-            return
-            
-        # 1. Diarization
-        speaker_turns = self.run_diarization(audio_data)
-        
-        # 2. Transcription (Word Level)
-        words = self.transcribe_words(audio_data)
-        if not words:
-            return
-            
-        # 3. Assign Speaker to Words
-        for word in words:
-            word["speaker"] = self.assign_speaker(word["start_sec"], word["end_sec"], speaker_turns)
-            
-        # 4. Post-processing (Sentences, Confidence, Turns)
+        vad_regions = get_speech_timestamps(
+            torch.from_numpy(audio_data),
+            self.vad_model,
+            sampling_rate=self.sample_rate,
+            threshold=config.VAD_THRESHOLD,
+            min_speech_duration_ms=config.VAD_MIN_SPEECH_DURATION_MS,
+            min_silence_duration_ms=config.VAD_MIN_SILENCE_MS,
+            speech_pad_ms=config.VAD_SPEECH_PAD_MS,
+            max_speech_duration_s=config.ASR_MAX_SPEECH_SECONDS,
+            return_seconds=False,
+        )
+
+        speaker_turns = self.run_diarization(audio_data) if vad_regions else []
+        words = []
+        for region in vad_regions:
+            utterance = self.transcribe_speech_region(
+                audio_data, int(region["start"]), int(region["end"])
+            )
+            if utterance is None or not utterance["text"]:
+                continue
+            for word in utterance["words"]:
+                word["speaker"] = self.assign_speaker(
+                    word["start_sec"], word["end_sec"], speaker_turns
+                )
+            words.extend(utterance["words"])
+
         sentences = self.build_scored_sentences(audio_data, words)
         turns = self.group_sentences_into_turns(sentences)
         full_text = self.flatten_transcript(turns)
-
-        # 5. Save to JSON
-        transcript_dir = video_dir / "transcripts"
-        transcript_dir.mkdir(parents=True, exist_ok=True)
-        
+        start = self.round_sec(segment_meta.get("start_time_sec", 0.0))
+        metadata_end = float(segment_meta.get("end_time_sec", -1.0))
+        end = self.round_sec(
+            metadata_end if metadata_end >= start else start + len(audio_data) / self.sample_rate
+        )
         output_data = {
+            "video_id": video_dir.name,
             "segment_id": segment_id,
-            "global_start_frame": segment_meta.get('global_start_frame', 0),
-            "start_time_sec": segment_meta.get('start_time_sec', 0.0),
-            "end_time_sec": segment_meta.get('end_time_sec', 0.0),
+            "start": start,
+            "end": end,
+            # Keep legacy fields consumed by the embedding stage.
+            "global_start_frame": segment_meta.get("global_start_frame", 0),
+            "start_time_sec": start,
+            "end_time_sec": end,
             "turns": turns,
-            "full_text": full_text.strip()
+            "full_text": full_text,
         }
-        
-        with open(transcript_dir / f"{segment_id}_transcript.json", 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, indent=2, ensure_ascii=False)
-            
-        logger.info(f"  -> Transcript extracted: {full_text[:50]}...")
 
-    def process_video(self, video_id: str, force: bool = False):
-        """Extracts transcripts for all segments of a video with checkpoint support."""
+        transcript_dir = video_dir / "transcripts"
+        transcript_path = transcript_dir / f"{segment_id}_transcript.json"
+        self.atomic_write_json(transcript_path, output_data)
+        error_path = transcript_dir / f"{segment_id}_transcript.error.json"
+        if error_path.exists():
+            error_path.unlink()
+        logger.info("Transcript extracted: %s", full_text[:50])
+        return output_data
+
+    @staticmethod
+    def _is_valid_checkpoint(data: dict) -> bool:
+        required_keys = {"video_id", "segment_id", "start", "end", "turns", "full_text"}
+        return required_keys.issubset(data)
+
+    def process_video(self, video_id: str, force: bool = False) -> dict:
+        """Extract transcripts for every VAD segment with resumable checkpoints."""
         video_dir = Path(config.OUTPUT_DIR) / video_id
         manifest_path = video_dir / "manifest_vad.json"
-        
         if not manifest_path.exists():
-            logger.error(f"Manifest not found for video {video_id}.")
-            return
-            
-        try:
-            with open(manifest_path, 'r', encoding='utf-8') as f:
-                manifest = json.load(f)
-                
-            segments = manifest.get('segments', [])
-            logger.info(f"Processing {len(segments)} segments for {video_id}...")
-            
-            transcript_dir = video_dir / "transcripts"
-            transcript_dir.mkdir(parents=True, exist_ok=True)
-            
-            for seg_meta in segments:
-                segment_id = seg_meta['segment_id']
-                trans_file = transcript_dir / f"{segment_id}_transcript.json"
-                
-                # Checkpoint check: skip extraction if transcript file already exists
-                if not force and trans_file.exists():
-                    try:
-                        with open(trans_file, 'r', encoding='utf-8') as f:
-                            trans_data = json.load(f)
-                        if trans_data.get("full_text"):
-                            logger.info(f"  -> [Skip] Transcript for {segment_id} (already extracted: {trans_data['full_text'][:40]}...).")
-                            continue
-                    except Exception:
-                        pass
-                
-                self.process_segment(seg_meta, video_dir)
-                
-        except Exception as e:
-            logger.error(f"Failed to process video {video_id}: {e}")
-            raise
+            raise FileNotFoundError(f"Manifest not found for video {video_id}: {manifest_path}")
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        segments = manifest.get("segments", [])
+        if not segments:
+            raise ValueError(f"Manifest contains no segments: {manifest_path}")
+        logger.info("Processing %d segments for %s...", len(segments), video_id)
+
+        transcript_dir = video_dir / "transcripts"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        stats = {"processed": 0, "skipped": 0, "errors": 0}
+        failures = []
+
+        for segment_meta in segments:
+            segment_id = segment_meta["segment_id"]
+            transcript_path = transcript_dir / f"{segment_id}_transcript.json"
+            if not force and transcript_path.exists():
+                try:
+                    checkpoint = json.loads(transcript_path.read_text(encoding="utf-8"))
+                    if self._is_valid_checkpoint(checkpoint):
+                        stats["skipped"] += 1
+                        logger.info("[Skip] Transcript for %s already exists.", segment_id)
+                        continue
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+            try:
+                self.process_segment(segment_meta, video_dir)
+                stats["processed"] += 1
+            except Exception as exc:
+                stats["errors"] += 1
+                failure = {
+                    "segment_id": segment_id,
+                    "file_path": str(segment_meta.get("file_path", "")),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+                failures.append(failure)
+                self.atomic_write_json(
+                    transcript_dir / f"{segment_id}_transcript.error.json", failure
+                )
+                logger.exception("Transcript failed for %s", segment_id)
+
+        logger.info("Transcript summary for %s: %s", video_id, stats)
+        if failures:
+            failed_ids = ", ".join(item["segment_id"] for item in failures)
+            raise RuntimeError(
+                f"Transcript extraction failed for {len(failures)} segment(s): {failed_ids}"
+            )
+        return stats
+
 
 class TranscriptContext:
     def __enter__(self):

@@ -46,7 +46,8 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
         dry_run (bool): If True, only loads and unloads models to test environment/VRAM without processing videos.
         raw_dir (str): Custom directory containing raw video files.
         limit (int): Maximum number of videos to process (useful for quick testing).
-        stage (str): 'all', '1'/'vad', '2'/'dino', '3'/'vlm', '4'/'embed', '5'/'qdrant'
+        stage (str): 'all', '1'/'vad', '1.5'/'transcript', '2'/'dino',
+            '3'/'vlm', '4'/'embed', '5'/'qdrant'
         force (bool): If True, forces re-processing even if checkpoints/outputs already exist.
     """
     target_raw_dir = raw_dir if raw_dir else config.RAW_DIR
@@ -133,7 +134,10 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
         free_memory()
 
     # 1.5. STAGE 1.5: TRANSCRIPT EXTRACTION
-    if stage in ["all", "1.5", "transcript"]:
+    transcript_enabled = stage in ["1.5", "transcript"] or (
+        stage == "all" and config.USE_TRANSCRIPT_BRANCH
+    )
+    if transcript_enabled:
         logger.info("--- STAGE 1.5: Transcript Extraction (PhoASR & Pyannote) ---")
         from src.audio.transcript_extractor import TranscriptContext
         with TranscriptContext() as transcriber:
@@ -191,7 +195,16 @@ if __name__ == "__main__":
     parser.add_argument("--force", action="store_true", help="Force re-processing and overwrite existing checkpoints")
     parser.add_argument("--raw-dir", type=str, default=None, help="Custom path to raw videos directory")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of videos to process")
-    parser.add_argument("--stage", type=str, default="all", choices=["all", "1", "2", "3", "4", "5", "vad", "dino", "vlm", "embed", "qdrant"], help="Run a specific stage only")
+    parser.add_argument(
+        "--stage",
+        type=str,
+        default="all",
+        choices=[
+            "all", "1", "1.5", "2", "3", "4", "5",
+            "vad", "transcript", "dino", "vlm", "embed", "qdrant",
+        ],
+        help="Run a specific stage only",
+    )
 
     args = parser.parse_args()
 

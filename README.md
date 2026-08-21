@@ -70,7 +70,7 @@ Chọn Accelerator là **GPU T4x2** hoặc **P100**:
 ```bash
 # 1. Cài đặt thư viện AI và dependencies tương thích
 !pip install -q --upgrade transformers accelerate qwen-vl-utils sentence-transformers
-!pip install -q pydantic-settings qdrant-client opencv-python pytest pyannote.audio
+!pip install -q "silero-vad[onnx-cpu]==6.2.1" "onnxruntime==1.27.0" "pyannote.audio==4.0.7" "soundfile>=0.12" pydantic-settings qdrant-client opencv-python pytest
 !apt-get install -y ffmpeg
 
 # 2. Clone repository về Kaggle
@@ -124,6 +124,9 @@ Hệ thống hỗ trợ cấu hình động thông qua file [`src/config.py`](fi
 | `AIC_VECTOR_DIM` | `2048` | Kích thước vector nhúng của Qwen3-VL-Embedding. |
 | `AIC_TARGET_FPS` | `30` | FPS mục tiêu cố định chống trôi frame timestamp. |
 | `AIC_ASR_MODEL_ID` | `Qualcomm-AI-Research/PhoASR-whisper-small` | Model nhận diện giọng nói (ASR). |
+| `AIC_USE_TRANSCRIPT_BRANCH` | `True` | Chạy Stage 1.5 khi dùng `--stage all`. |
+| `AIC_ASR_MAX_SPEECH_SECONDS` | `28.0` | Độ dài tối đa của mỗi vùng tiếng nói đưa vào PhoASR. |
+| `AIC_ASR_MIN_SPEECH_SECONDS` | `0.35` | Bỏ qua vùng tiếng nói ngắn hơn ngưỡng này. |
 | `AIC_HF_TOKEN` | `(rỗng)` | HuggingFace Token bắt buộc nếu muốn bật Pyannote Diarization (nhận diện người nói). |
 | `AIC_DINO_MODEL_ID` | `dinov2_vitb14` | Model DINOv2 trích đặc trưng hình ảnh. |
 | `AIC_DINO_SIMILARITY_THRESHOLD` | `0.65` | Ngưỡng Cosine gom cụm frame keyframe. |
