@@ -219,15 +219,26 @@ def run_staged_pipeline(
                 logger.info(f"[{idx}/{len(batch_vids)}] Ingesting vectors to Qdrant for: {vid} ...")
                 db.upsert_video_embeddings(vid)
 
-            # CLEANUP: Remove video segments
+            # CLEANUP: Remove video segments but keep audio
             if cleanup_segments:
-                logger.info(f"--- [Batch {batch_idx}/{total_batches}] Cleanup: Deleting video segments to save disk space ---")
-                import shutil
+                logger.info(f"--- [Batch {batch_idx}/{total_batches}] Cleanup: Extracting audio and deleting video segments ---")
+                import subprocess
                 for vid in batch_vids:
                     seg_dir = Path(config.OUTPUT_DIR) / vid / "segments"
                     if seg_dir.exists():
-                        shutil.rmtree(seg_dir, ignore_errors=True)
-                        logger.info(f"Deleted segments for {vid}")
+                        for mp4_file in seg_dir.glob("*.mp4"):
+                            m4a_file = mp4_file.with_suffix(".m4a")
+                            try:
+                                # Extract audio without re-encoding (instantaneous)
+                                subprocess.run(
+                                    ["ffmpeg", "-y", "-i", str(mp4_file), "-vn", "-c:a", "copy", str(m4a_file)],
+                                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                                )
+                                # Delete the heavy video file
+                                mp4_file.unlink()
+                            except Exception as e:
+                                logger.error(f"Failed to extract audio for {mp4_file.name}: {e}")
+                        logger.info(f"Converted segments to .m4a and deleted .mp4 for {vid}")
 
             logger.info(f"✨ Batch {batch_idx}/{total_batches} completed and ingested into DB successfully!")
 
