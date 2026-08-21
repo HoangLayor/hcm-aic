@@ -15,7 +15,7 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 class SearchRetriever:
-    def __init__(self, kf_collection="keyframes_merged", cap_collection="captions_merged"):
+    def __init__(self, kf_collection="keyframes_v2", cap_collection="captions_v2"):
         self.kf_collection = kf_collection
         self.cap_collection = cap_collection
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -70,24 +70,24 @@ class SearchRetriever:
         
         # Search Keyframes
         try:
-            kf_results = self.qdrant.search(
+            kf_results = self.qdrant.query_points(
                 collection_name=self.kf_collection,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=top_k,
                 with_payload=True
-            )
+            ).points
             combined_results.extend(kf_results)
         except Exception as e:
             logger.error(f"Failed to search {self.kf_collection}: {e}")
 
         # Search Captions
         try:
-            cap_results = self.qdrant.search(
+            cap_results = self.qdrant.query_points(
                 collection_name=self.cap_collection,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=top_k,
                 with_payload=True
-            )
+            ).points
             combined_results.extend(cap_results)
         except Exception as e:
             logger.error(f"Failed to search {self.cap_collection}: {e}")
@@ -121,12 +121,12 @@ class SearchRetriever:
         for i, q in enumerate(queries):
             vec = self._encode_text(q)
             try:
-                results = self.qdrant.search(
+                results = self.qdrant.query_points(
                     collection_name=self.kf_collection,
-                    query_vector=vec,
+                    query=vec,
                     limit=top_k_per_query,
                     with_payload=True
-                )
+                ).points
                 event_candidates.append(results)
             except Exception as e:
                 logger.error(f"Failed to search {self.kf_collection} for TRAKE: {e}")
