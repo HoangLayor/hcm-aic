@@ -111,6 +111,45 @@ Hệ thống sẽ tự động xử lý trọn gói (End-to-End) 5 video mỗi �
 !python run_kaggle.py --stage qdrant    # Chỉ chạy Stage 5 (Qdrant Ingestion)
 ```
 
+### Bước 2.3: Sao lưu từng batch lên Google Drive cá nhân và dọn ổ đĩa
+
+Pipeline hỗ trợ `rclone` để upload toàn bộ `output/<video_id>/` của một batch sau
+khi Stage 5 đã nạp vector vào Qdrant. Với hai cờ bên dưới, chương trình chỉ xóa
+output cục bộ khi **toàn bộ batch đã upload và được kiểm tra thành công**.
+`qdrant_db` và video gốc không bị xóa.
+
+1. Cài và kết nối Google Drive cá nhân với `rclone`. Có thể chạy cấu hình này trên
+máy cá nhân (dễ đăng nhập bằng trình duyệt) hoặc trực tiếp trong notebook:
+
+```bash
+!sudo apt-get update -qq && sudo apt-get install -y rclone
+!rclone config
+```
+
+Trong màn hình cấu hình, chọn `n` để tạo remote, đặt tên là `gdrive`, chọn loại
+storage là `drive`, và đăng nhập tài khoản Google cá nhân khi `rclone` đưa link
+xác thực. Kiểm tra kết nối:
+
+```bash
+!rclone lsd gdrive:
+```
+
+2. Chạy pipeline. Ví dụ dưới đây xử lý 5 video/batch, upload lần lượt vào thư mục
+`aic-output/<video_id>/` trên Drive, xác minh các file, rồi mới xóa output của batch:
+
+```bash
+!python run_kaggle.py \
+  --raw-dir /kaggle/input/datasets/dotrantu/aic-10-video/Segment_Video \
+  --batch-size 5 \
+  --drive-destination gdrive:aic-output \
+  --delete-local-after-upload
+```
+
+Nếu chỉ muốn backup mà vẫn giữ output local, bỏ cờ `--delete-local-after-upload`.
+Không đưa file cấu hình `rclone.conf` hoặc token Google vào Git/notebook công khai.
+Với Kaggle, hãy lưu cấu hình đó trong Secret/Dataset private rồi chép vào
+`~/.config/rclone/rclone.conf` trước khi chạy.
+
 ---
 
 ## 3. Cấu hình & Biến môi trường (Environment Variables)

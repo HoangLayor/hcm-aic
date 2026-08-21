@@ -3,6 +3,8 @@ import gc
 import sys
 import logging
 import argparse
+import shutil
+import subprocess
 from pathlib import Path
 from src.config import config
 
@@ -46,6 +48,55 @@ def chunk_list(items: list, chunk_size: int):
     for i in range(0, len(items), chunk_size):
         yield items[i : i + chunk_size]
 
+
+def upload_batch_to_google_drive(video_ids: list, drive_destination: str, delete_local: bool):
+    """Copy each video's artifacts with rclone and optionally delete verified copies.
+
+    ``drive_destination`` must be an rclone remote path, e.g. ``gdrive:aic-output``.
+    Local video directories are removed only after both commands complete for
+    every video in the batch.
+    """
+    if shutil.which("rclone") is None:
+        raise RuntimeError(
+            "rclone was not found. Install and configure rclone before using "
+            "--drive-destination. See README.md."
+        )
+
+    output_root = Path(config.OUTPUT_DIR).resolve()
+    remote_root = drive_destination.rstrip("/")
+    if not remote_root or ":" not in remote_root:
+        raise ValueError(
+            "--drive-destination must be an rclone remote path, for example "
+            "gdrive:aic-output"
+        )
+
+    local_remote_pairs = []
+    for video_id in video_ids:
+        local_video_dir = output_root / video_id
+        if not local_video_dir.is_dir():
+            raise FileNotFoundError(f"Output directory not found for {video_id}: {local_video_dir}")
+
+        remote_video_dir = f"{remote_root}/{video_id}"
+        logger.info(f"☁️ Uploading {local_video_dir} to {remote_video_dir} ...")
+        subprocess.run(
+            ["rclone", "copy", str(local_video_dir), remote_video_dir, "--progress"],
+            check=True,
+        )
+        local_remote_pairs.append((video_id, local_video_dir, remote_video_dir))
+
+    # Do not trust a copy exit code alone before deleting any data in the batch.
+    for video_id, local_video_dir, remote_video_dir in local_remote_pairs:
+        subprocess.run(
+            ["rclone", "check", str(local_video_dir), remote_video_dir, "--one-way"],
+            check=True,
+        )
+        logger.info(f"✅ Upload verified for {video_id}.")
+
+    if delete_local:
+        for _, local_video_dir, _ in local_remote_pairs:
+            shutil.rmtree(local_video_dir)
+            logger.info(f"🗑️ Deleted verified local output: {local_video_dir}")
+
 def run_staged_pipeline(
     dry_run: bool = False,
     raw_dir: str = None,
@@ -54,6 +105,8 @@ def run_staged_pipeline(
     force: bool = False,
     video_batch_size: int = None,
     skip_transcript: bool = False,
+    drive_destination: str = None,
+    delete_local_after_upload: bool = False,
 ):
     """
     Staged Execution Pipeline designed for Kaggle/Colab (VRAM < 16GB).
@@ -67,6 +120,8 @@ def run_staged_pipeline(
         force (bool): If True, forces re-processing even if checkpoints/outputs already exist.
         video_batch_size (int): Number of videos to run end-to-end per batch (defaults to config.VIDEO_BATCH_SIZE).
         skip_transcript (bool): If True, explicitly skips transcript extraction stage.
+        drive_destination (str): rclone remote destination for each completed batch.
+        delete_local_after_upload (bool): Delete each local video output after verified upload.
     """
     target_raw_dir = raw_dir if raw_dir else config.RAW_DIR
     stage = stage.lower()
@@ -76,6 +131,11 @@ def run_staged_pipeline(
         else getattr(config, "VIDEO_BATCH_SIZE", 5)
     )
     use_transcript = getattr(config, "USE_TRANSCRIPT_BRANCH", True) and not skip_transcript
+
+    if (drive_destination or delete_local_after_upload) and stage != "all":
+        raise ValueError("Google Drive upload is supported only with --stage all (per completed batch).")
+    if delete_local_after_upload and not drive_destination:
+        raise ValueError("--delete-local-after-upload requires --drive-destination.")
 
     if dry_run:
         logger.info("==================================================")
@@ -215,6 +275,13 @@ def run_staged_pipeline(
 
             logger.info(f"✨ Batch {batch_idx}/{total_batches} completed and ingested into DB successfully!")
 
+            if drive_destination:
+                upload_batch_to_google_drive(
+                    batch_vids,
+                    drive_destination=drive_destination,
+                    delete_local=delete_local_after_upload,
+                )
+
     # ================= 2. SINGLE-STAGE TARGETED EXECUTION =================
     else:
         # STAGE 1: VAD SPLITTING
@@ -298,6 +365,17 @@ if __name__ == "__main__":
         help="Skip Stage 1.5 transcript extraction in the pipeline",
     )
     parser.add_argument(
+        "--drive-destination",
+        type=str,
+        default=None,
+        help="rclone destination, e.g. gdrive:aic-output. Upload each completed batch.",
+    )
+    parser.add_argument(
+        "--delete-local-after-upload",
+        action="store_true",
+        help="Delete output/<video_id> only after its Google Drive upload is verified.",
+    )
+    parser.add_argument(
         "--stage",
         type=str,
         default="all",
@@ -322,4 +400,6 @@ if __name__ == "__main__":
         force=args.force,
         video_batch_size=args.video_batch_size,
         skip_transcript=args.no_transcript,
+        drive_destination=args.drive_destination,
+        delete_local_after_upload=args.delete_local_after_upload,
     )
