@@ -64,12 +64,12 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
         splitter = VadVideoSplitter()
         free_memory()
 
-        # 1.5. DRY RUN TRANSCRIPT
-        logger.info("--- STAGE 1.5: Transcript Extraction (PhoASR & Pyannote) (Dry-Run) ---")
-        from src.audio.transcript_extractor import TranscriptContext
-        with TranscriptContext() as transcriber:
-            pass
-        free_memory()
+        # 1.5. DRY RUN TRANSCRIPT (temporarily disabled)
+        # logger.info("--- STAGE 1.5: Transcript Extraction (PhoASR & Pyannote) (Dry-Run) ---")
+        # from src.audio.transcript_extractor import TranscriptContext
+        # with TranscriptContext() as transcriber:
+        #     pass
+        # free_memory()
 
         # 2. DRY RUN DINO
         logger.info("--- STAGE 2: Keyframe Extraction (DINOv2) (Dry-Run) ---")
@@ -133,18 +133,18 @@ def run_staged_pipeline(dry_run: bool = False, raw_dir: str = None, limit: int =
             splitter.process_video(str(v_path), force=force)
         free_memory()
 
-    # 1.5. STAGE 1.5: TRANSCRIPT EXTRACTION
-    transcript_enabled = stage in ["1.5", "transcript"] or (
-        stage == "all" and config.USE_TRANSCRIPT_BRANCH
-    )
-    if transcript_enabled:
-        logger.info("--- STAGE 1.5: Transcript Extraction (PhoASR & Pyannote) ---")
-        from src.audio.transcript_extractor import TranscriptContext
-        with TranscriptContext() as transcriber:
-            for idx, vid in enumerate(video_ids, 1):
-                logger.info(f"[{idx}/{len(video_ids)}] Extracting transcript for: {vid} ...")
-                transcriber.process_video(vid, force=force)
-        free_memory()
+    # 1.5. STAGE 1.5: TRANSCRIPT EXTRACTION (temporarily disabled)
+    # transcript_enabled = stage in ["1.5", "transcript"] or (
+    #     stage == "all" and config.USE_TRANSCRIPT_BRANCH
+    # )
+    # if transcript_enabled:
+    #     logger.info("--- STAGE 1.5: Transcript Extraction (PhoASR & Pyannote) ---")
+    #     from src.audio.transcript_extractor import TranscriptContext
+    #     with TranscriptContext() as transcriber:
+    #         for idx, vid in enumerate(video_ids, 1):
+    #             logger.info(f"[{idx}/{len(video_ids)}] Extracting transcript for: {vid} ...")
+    #             transcriber.process_video(vid, force=force)
+    #     free_memory()
 
     # 2. STAGE 2: KEYFRAME EXTRACTION (DINOv2)
     if stage in ["all", "2", "dino", "keyframe"]:
