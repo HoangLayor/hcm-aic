@@ -20,9 +20,19 @@ class KeyframeExtractor:
     def __init__(self):
         logger.info(f"Loading DINOv2 ({config.DINO_MODEL_ID})...")
         try:
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
             model_entrypoint = config.DINO_MODEL_ID.split('/')[-1]
-            self.dino = torch.hub.load('facebookresearch/dinov2', model_entrypoint).eval().to(self.device)
+            raw_dino = torch.hub.load('facebookresearch/dinov2', model_entrypoint).eval()
+            
+            if torch.cuda.is_available():
+                if torch.cuda.device_count() > 1:
+                    logger.info(f"Using {torch.cuda.device_count()} GPUs with DataParallel for DINOv2.")
+                    self.dino = torch.nn.DataParallel(raw_dino).to(self.device)
+                else:
+                    self.dino = raw_dino.to(self.device)
+            else:
+                self.dino = raw_dino.to('cpu')
+
             # Standard ImageNet norm values used by DINOv2
             self.mean = torch.tensor((0.485, 0.456, 0.406), device=self.device).view(3, 1, 1)
             self.std = torch.tensor((0.229, 0.224, 0.225), device=self.device).view(3, 1, 1)
@@ -41,36 +51,62 @@ class KeyframeExtractor:
             torch.cuda.empty_cache()
         logger.info("DINOv2 memory freed.")
 
-    def read_frames(self, path: Path) -> list:
+    def read_frames(self, path: Path) -> tuple:
+        """Reads video frames with smart FPS sub-sampling while tracking exact original frame indices."""
         cap = cv2.VideoCapture(str(path))
         if not cap.isOpened():
             raise ValueError(f"Cannot open video: {path}")
             
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0:
+            fps = getattr(config, "TARGET_FPS", 30.0)
+            
+        sample_fps = getattr(config, "DINO_SAMPLE_FPS", 10.0)
+        if sample_fps > 0 and sample_fps < fps:
+            step = max(1, int(round(fps / sample_fps)))
+        else:
+            step = 1
+
         frames = []
+        orig_indices = []
+        frame_idx = 0
         while True:
             ok, frame = cap.read()
             if not ok:
                 break
-            frames.append(frame)
+            if frame_idx % step == 0:
+                frames.append(frame)
+                orig_indices.append(frame_idx)
+            frame_idx += 1
         cap.release()
         
         if not frames:
             logger.warning(f"No frames extracted from {path}")
-        return frames
+        return frames, orig_indices
 
     def encode_dino(self, frames: list) -> np.ndarray:
+        if not frames:
+            return np.array([])
+            
         output = []
-        for start in range(0, len(frames), config.DINO_BATCH_SIZE):
+        batch_size = getattr(config, "DINO_BATCH_SIZE", 64)
+        use_cuda = torch.cuda.is_available()
+        
+        for start in range(0, len(frames), batch_size):
             tensors = []
-            for frame in frames[start:start + config.DINO_BATCH_SIZE]:
-                # Resize and color space conversion
-                rgb = cv2.cvtColor(cv2.resize(frame, (224, 224)), cv2.COLOR_BGR2RGB)
+            for frame in frames[start:start + batch_size]:
+                # Fast resize & color space conversion
+                rgb = cv2.cvtColor(cv2.resize(frame, (224, 224), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
                 tensors.append(torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0)
                 
             batch = (torch.stack(tensors).to(self.device) - self.mean) / self.std
             with torch.inference_mode():
-                # Normalize features for cosine similarity
-                embeddings = F.normalize(self.dino(batch), dim=1).cpu()
+                if use_cuda:
+                    with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+                        features = self.dino(batch)
+                else:
+                    features = self.dino(batch)
+                embeddings = F.normalize(features, dim=1).cpu()
                 output.append(embeddings)
                 
         return torch.cat(output).numpy() if output else np.array([])
@@ -113,7 +149,7 @@ class KeyframeExtractor:
         return groups, keyframes, scores
 
     def process_segment(self, seg_meta: dict, video_dir: Path, force: bool = False):
-        """Extracts keyframes for a single segment and saves grouping metadata."""
+        """Extracts keyframes for a single segment and saves grouping metadata with exact global indices."""
         segment_id = seg_meta['segment_id']
         segment_file = Path(seg_meta['file_path'])
         global_start_frame = seg_meta.get('global_start_frame', 0)
@@ -134,7 +170,7 @@ class KeyframeExtractor:
         
         logger.info(f"Processing segment {segment_id} (Global Start: {global_start_frame})...")
         
-        frames = self.read_frames(segment_file)
+        frames, orig_indices = self.read_frames(segment_file)
         if not frames:
             return
 
@@ -147,8 +183,12 @@ class KeyframeExtractor:
         
         group_metadata = []
         for i, (group, local_kf_idx) in enumerate(zip(groups, keyframes), start=1):
-            # Calculate absolute global frame index safely
-            global_kf_idx = global_start_frame + local_kf_idx
+            # Map sampled index back to original frame index on raw video
+            orig_kf_idx = orig_indices[local_kf_idx]
+            orig_start_idx = orig_indices[group[0]]
+            orig_end_idx = orig_indices[group[-1]]
+            
+            global_kf_idx = global_start_frame + orig_kf_idx
             
             frame_img = frames[local_kf_idx]
             kf_filename = f"keyframe_{global_kf_idx:08d}.jpg"
@@ -157,11 +197,11 @@ class KeyframeExtractor:
             
             group_metadata.append({
                 "group_id": i,
-                "local_start_frame": int(group[0]),
-                "local_end_frame": int(group[-1]),
-                "local_keyframe": int(local_kf_idx),
-                "global_start_frame": global_start_frame + int(group[0]),
-                "global_end_frame": global_start_frame + int(group[-1]),
+                "local_start_frame": int(orig_start_idx),
+                "local_end_frame": int(orig_end_idx),
+                "local_keyframe": int(orig_kf_idx),
+                "global_start_frame": global_start_frame + int(orig_start_idx),
+                "global_end_frame": global_start_frame + int(orig_end_idx),
                 "global_keyframe": global_kf_idx,
                 "num_frames": len(group),
                 "image_path": str(kf_path)

@@ -49,7 +49,8 @@ try:
         
         # 2. Keyframe Extraction (DINOv2) Configuration
         DINO_MODEL_ID: str = "dinov2_vitb14"
-        DINO_BATCH_SIZE: int = Field(default=16, description="Batch size for DINOv2.")
+        DINO_SAMPLE_FPS: float = Field(default=10.0, description="Sampling rate (FPS) for keyframe extraction. Set to 0 or 30 for full FPS.")
+        DINO_BATCH_SIZE: int = Field(default=64, description="Batch size for DINOv2.")
         DINO_SIMILARITY_THRESHOLD: float = Field(default=0.65, description="Cosine threshold to group frames.")
         DINO_MAX_CANDIDATES: int = Field(default=10, description="Max candidate frames per group.")
         
@@ -109,7 +110,8 @@ except ImportError:
             MAX_SENTENCE_SEC: float = Field(default=18.0, description="Max sentence duration.")
             
             DINO_MODEL_ID: str = "dinov2_vitb14"
-            DINO_BATCH_SIZE: int = Field(default=16, description="Batch size for DINOv2.")
+            DINO_SAMPLE_FPS: float = Field(default=10.0, description="Sampling rate (FPS) for keyframe extraction. Set to 0 or 30 for full FPS.")
+            DINO_BATCH_SIZE: int = Field(default=64, description="Batch size for DINOv2.")
             DINO_SIMILARITY_THRESHOLD: float = Field(default=0.65, description="Cosine threshold to group frames.")
             DINO_MAX_CANDIDATES: int = Field(default=10, description="Max candidate frames per group.")
             
