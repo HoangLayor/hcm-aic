@@ -97,8 +97,7 @@ class VadVideoSplitter:
                 wav, self.model, sampling_rate=self.sample_rate,
                 min_silence_duration_ms=config.VAD_MIN_SILENCE_MS,
                 threshold=config.VAD_THRESHOLD,
-                min_speech_duration_ms=config.VAD_MIN_SPEECH_DURATION_MS,
-                speech_pad_ms=config.VAD_SPEECH_PAD_MS
+                min_speech_duration_ms=config.VAD_MIN_SPEECH_DURATION_MS
             )
             
             split_points = []

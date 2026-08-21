@@ -73,10 +73,9 @@ except ImportError:
             QDRANT_CAPTION_COLLECTION: str = Field(default="captions", description="Target Qdrant Collection for Captions.")
             
             VAD_MAX_SEGMENT_DURATION_SEC: int = Field(default=30, description="Maximum duration per segment in seconds.")
-            VAD_MIN_SILENCE_MS: int = Field(default=350, description="Minimum silence duration to trigger split.")
+            VAD_MIN_SILENCE_MS: int = Field(default=1000, description="Minimum silence duration to trigger split.")
             VAD_THRESHOLD: float = Field(default=0.5, description="Silence detection threshold.")
             VAD_MIN_SPEECH_DURATION_MS: int = Field(default=250, description="Minimum speech duration.")
-            VAD_SPEECH_PAD_MS: int = Field(default=300, description="Pad speech to avoid cutting words.")
             
             DIARIZATION_MIN_SPEAKERS: int = Field(default=1, description="Min speakers.")
             DIARIZATION_MAX_SPEAKERS: int = Field(default=6, description="Max speakers.")
