@@ -47,7 +47,7 @@ class TranscriptExtractor:
                 feature_extractor=self.processor.feature_extractor,
                 chunk_length_s=30,
                 return_timestamps="word",
-                generate_kwargs={"language": "vi", "task": "transcribe", "return_legacy_cache": True},
+                generate_kwargs={"language": "vi", "task": "transcribe"},
                 torch_dtype=self.model_dtype,
                 device=self.pipeline_device,
             )
