@@ -21,7 +21,7 @@ def free_memory():
         pass
     logger.info("Memory freed.")
 
-def find_raw_videos(raw_dir_path: str, limit: int = None) -> list:
+def find_raw_videos(raw_dir_path: str, offset: int = 0, limit: int = None) -> list:
     """Find all video files in raw_dir_path (supports .mp4, .mkv, .avi, .mov and subdirectories)."""
     raw_dir = Path(raw_dir_path)
     if not raw_dir.exists():
@@ -34,6 +34,8 @@ def find_raw_videos(raw_dir_path: str, limit: int = None) -> list:
         if f.is_file() and f.suffix in video_extensions
     ]
     video_files = sorted(video_files)
+    if offset > 0:
+        video_files = video_files[offset:]
     if limit and limit > 0:
         video_files = video_files[:limit]
     return video_files
@@ -49,6 +51,7 @@ def chunk_list(items: list, chunk_size: int):
 def run_staged_pipeline(
     dry_run: bool = False,
     raw_dir: str = None,
+    offset: int = 0,
     limit: int = None,
     stage: str = "all",
     force: bool = False,
@@ -61,6 +64,7 @@ def run_staged_pipeline(
     Args:
         dry_run (bool): If True, only loads and unloads models to test environment/VRAM without processing videos.
         raw_dir (str): Custom directory containing raw video files.
+        offset (int): Number of videos to skip from the beginning.
         limit (int): Maximum number of videos to process (useful for quick testing).
         stage (str): 'all', '1'/'vad', '1.5'/'transcript', '2'/'dino',
             '3'/'vlm', '4'/'embed', '5'/'qdrant'
@@ -128,7 +132,7 @@ def run_staged_pipeline(
         return
 
     # Discover videos
-    raw_videos = find_raw_videos(target_raw_dir, limit=limit)
+    raw_videos = find_raw_videos(target_raw_dir, offset=offset, limit=limit)
     if not raw_videos:
         logger.error(f"No video files found in RAW_DIR ('{target_raw_dir}').")
         logger.error("Please provide valid video files or use --raw-dir / AIC_RAW_DIR.")
@@ -285,6 +289,7 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="Run in dry-run mode (tests model load/unload only)")
     parser.add_argument("--force", action="store_true", help="Force re-processing and overwrite existing checkpoints")
     parser.add_argument("--raw-dir", type=str, default=None, help="Custom path to raw videos directory")
+    parser.add_argument("--offset", type=int, default=0, help="Skip the first N videos (start from video N+1)")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of videos to process")
     parser.add_argument(
         "--video-batch-size", "--batch-size",
@@ -317,6 +322,7 @@ if __name__ == "__main__":
     run_staged_pipeline(
         dry_run=args.dry_run,
         raw_dir=args.raw_dir,
+        offset=args.offset,
         limit=args.limit,
         stage=args.stage,
         force=args.force,
