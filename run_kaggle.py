@@ -53,6 +53,7 @@ def run_staged_pipeline(
     stage: str = "all",
     force: bool = False,
     video_batch_size: int = None,
+    skip_transcript: bool = False,
 ):
     """
     Staged Execution Pipeline designed for Kaggle/Colab (VRAM < 16GB).
@@ -65,6 +66,7 @@ def run_staged_pipeline(
             '3'/'vlm', '4'/'embed', '5'/'qdrant'
         force (bool): If True, forces re-processing even if checkpoints/outputs already exist.
         video_batch_size (int): Number of videos to run end-to-end per batch (defaults to config.VIDEO_BATCH_SIZE).
+        skip_transcript (bool): If True, explicitly skips transcript extraction stage.
     """
     target_raw_dir = raw_dir if raw_dir else config.RAW_DIR
     stage = stage.lower()
@@ -73,6 +75,7 @@ def run_staged_pipeline(
         if video_batch_size is not None
         else getattr(config, "VIDEO_BATCH_SIZE", 5)
     )
+    use_transcript = getattr(config, "USE_TRANSCRIPT_BRANCH", True) and not skip_transcript
 
     if dry_run:
         logger.info("==================================================")
@@ -86,7 +89,7 @@ def run_staged_pipeline(
         free_memory()
 
         # 1.5. DRY RUN TRANSCRIPT
-        if getattr(config, "USE_TRANSCRIPT_BRANCH", True):
+        if use_transcript:
             logger.info("--- STAGE 1.5: Transcript Extraction (PhoASR & Pyannote) (Dry-Run) ---")
             from src.audio.transcript_extractor import TranscriptContext
             with TranscriptContext() as transcriber:
@@ -166,7 +169,7 @@ def run_staged_pipeline(
             free_memory()
 
             # STAGE 1.5: TRANSCRIPT EXTRACTION
-            if getattr(config, "USE_TRANSCRIPT_BRANCH", True):
+            if use_transcript:
                 logger.info(f"--- [Batch {batch_idx}/{total_batches}] STAGE 1.5: Transcript Extraction (PhoASR & Pyannote) ---")
                 from src.audio.transcript_extractor import TranscriptContext
                 with TranscriptContext() as transcriber:
@@ -290,6 +293,11 @@ if __name__ == "__main__":
         help="Number of videos to process end-to-end per batch (default: 5, 0 to process all together)",
     )
     parser.add_argument(
+        "--no-transcript", "--skip-transcript",
+        action="store_true",
+        help="Skip Stage 1.5 transcript extraction in the pipeline",
+    )
+    parser.add_argument(
         "--stage",
         type=str,
         default="all",
@@ -313,4 +321,5 @@ if __name__ == "__main__":
         stage=args.stage,
         force=args.force,
         video_batch_size=args.video_batch_size,
+        skip_transcript=args.no_transcript,
     )
