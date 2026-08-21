@@ -36,6 +36,14 @@ try:
         DIARIZATION_MAX_SPEAKERS: int = Field(default=6, description="Max speakers.")
         HF_TOKEN: str = Field(default="", description="HuggingFace Token for Pyannote")
         
+        # Transcript Quality & Sentence Parameters
+        TURN_MERGE_GAP_SEC: float = Field(default=1.50, description="Max gap to merge same speaker.")
+        QUALITY_RELIABLE_MIN_CONFIDENCE: float = Field(default=0.70, description="Confidence >= 0.70 is reliable.")
+        QUALITY_NCR_MAX_CONFIDENCE: float = Field(default=0.50, description="Confidence < 0.50 is NCR.")
+        CONFIDENCE_AUDIO_PAD_SEC: float = Field(default=0.15, description="Audio padding for confidence scoring.")
+        SENTENCE_PAUSE_SEC: float = Field(default=0.85, description="Pause threshold to split sentences.")
+        MAX_SENTENCE_SEC: float = Field(default=18.0, description="Max sentence duration.")
+        
         # 2. Keyframe Extraction (DINOv2) Configuration
         DINO_MODEL_ID: str = "dinov2_vitb14"
         DINO_BATCH_SIZE: int = Field(default=16, description="Batch size for DINOv2.")
@@ -79,6 +87,13 @@ except ImportError:
             
             DIARIZATION_MIN_SPEAKERS: int = Field(default=1, description="Min speakers.")
             DIARIZATION_MAX_SPEAKERS: int = Field(default=6, description="Max speakers.")
+            
+            TURN_MERGE_GAP_SEC: float = Field(default=1.50, description="Max gap to merge same speaker.")
+            QUALITY_RELIABLE_MIN_CONFIDENCE: float = Field(default=0.70, description="Confidence >= 0.70 is reliable.")
+            QUALITY_NCR_MAX_CONFIDENCE: float = Field(default=0.50, description="Confidence < 0.50 is NCR.")
+            CONFIDENCE_AUDIO_PAD_SEC: float = Field(default=0.15, description="Audio padding for confidence scoring.")
+            SENTENCE_PAUSE_SEC: float = Field(default=0.85, description="Pause threshold to split sentences.")
+            MAX_SENTENCE_SEC: float = Field(default=18.0, description="Max sentence duration.")
             
             DINO_MODEL_ID: str = "dinov2_vitb14"
             DINO_BATCH_SIZE: int = Field(default=16, description="Batch size for DINOv2.")
