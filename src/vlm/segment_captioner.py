@@ -16,31 +16,39 @@ if not logger.handlers:
 
 PROMPT_TEMPLATE = """
 Analyze this short news video clip and generate one concise English caption.
+
 Describe only visually supported information.
-Focus on: people, actions, objects, scene or location, visible text, important visual events.
+
+Focus on:
+- people
+- actions
+- objects
+- scene or location
+- visible text
+- important visual events
+
 Do not infer names, locations, or events unless they are clearly supported by the video.
 """
 
 class SegmentCaptioner:
     def __init__(self):
-        logger.info(f"Loading Qwen VLM ({config.VLM_MODEL_ID})... This may take a while and consume ~8GB VRAM.")
+        logger.info(f"Loading Qwen VLM ({config.VLM_MODEL_ID})... This may take a while and consume GPU memory.")
         try:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model = AutoModelForMultimodalLM.from_pretrained(
                 config.VLM_MODEL_ID,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                dtype=torch.float16,
                 device_map="auto",
-                attn_implementation="sdpa" if torch.cuda.is_available() else "eager",
-                trust_remote_code=True,
+                attn_implementation="sdpa",
             )
-            self.processor = AutoProcessor.from_pretrained(config.VLM_MODEL_ID, trust_remote_code=True)
+            self.processor = AutoProcessor.from_pretrained(config.VLM_MODEL_ID)
             
             # Constrain video length and resolution strictly to prevent OOM
             if hasattr(self.processor, "video_processor") and self.processor.video_processor is not None:
                 self.processor.video_processor.max_frames = config.VLM_MAX_VIDEO_FRAMES
                 self.processor.video_processor.size = {
                     "shortest_edge": 4_096,
-                    "longest_edge": 8_388_608, # Max pixel budget
+                    "longest_edge": config.VLM_MAX_VIDEO_PIXELS,
                 }
             logger.info("Qwen VLM loaded successfully.")
         except Exception as e:
@@ -82,15 +90,15 @@ class SegmentCaptioner:
                 return_tensors="pt",
             )
 
-            # Move to device
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items() if isinstance(v, torch.Tensor)}
+            inputs = inputs.to(self.model.device)
 
             with torch.inference_mode():
                 generated_ids = self.model.generate(
                     **inputs,
                     max_new_tokens=config.VLM_MAX_NEW_TOKENS,
-                    do_sample=False, # Use greedy decoding for factual descriptions
-                    temperature=0.0,
+                    do_sample=True,
+                    temperature=0.7,
+                    top_p=0.9,
                 )
 
             # Trim the prompt tokens from the output
@@ -104,10 +112,10 @@ class SegmentCaptioner:
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=True,
             )
-            return output_text[0].strip()
+            return output_text[0]
         except Exception as e:
             logger.error(f"Error generating caption for {video_path.name}: {e}")
-            return ""
+            raise
 
     def process_video(self, video_id: str, force: bool = False):
         """Generates captions for all segments of a video with checkpoint support."""
@@ -170,6 +178,7 @@ class SegmentCaptioner:
             logger.info(f"Successfully finished Captioning for {video_id}.")
         except Exception as e:
             logger.error(f"Caption generation failed for {video_id}: {e}")
+            raise
 
 # Context manager to ensure model cleanup
 class QwenCaptionerContext:
