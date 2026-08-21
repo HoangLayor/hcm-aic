@@ -57,6 +57,7 @@ def run_staged_pipeline(
     force: bool = False,
     video_batch_size: int = None,
     skip_transcript: bool = False,
+    cleanup_segments: bool = False,
 ):
     """
     Staged Execution Pipeline designed for Kaggle/Colab (VRAM < 16GB).
@@ -71,6 +72,7 @@ def run_staged_pipeline(
         force (bool): If True, forces re-processing even if checkpoints/outputs already exist.
         video_batch_size (int): Number of videos to run end-to-end per batch (defaults to config.VIDEO_BATCH_SIZE).
         skip_transcript (bool): If True, explicitly skips transcript extraction stage.
+        cleanup_segments (bool): If True, deletes intermediate .mp4 segments after a batch finishes to save disk space.
     """
     target_raw_dir = raw_dir if raw_dir else config.RAW_DIR
     stage = stage.lower()
@@ -217,6 +219,16 @@ def run_staged_pipeline(
                 logger.info(f"[{idx}/{len(batch_vids)}] Ingesting vectors to Qdrant for: {vid} ...")
                 db.upsert_video_embeddings(vid)
 
+            # CLEANUP: Remove video segments
+            if cleanup_segments:
+                logger.info(f"--- [Batch {batch_idx}/{total_batches}] Cleanup: Deleting video segments to save disk space ---")
+                import shutil
+                for vid in batch_vids:
+                    seg_dir = Path(config.OUTPUT_DIR) / vid / "segments"
+                    if seg_dir.exists():
+                        shutil.rmtree(seg_dir, ignore_errors=True)
+                        logger.info(f"Deleted segments for {vid}")
+
             logger.info(f"✨ Batch {batch_idx}/{total_batches} completed and ingested into DB successfully!")
 
     # ================= 2. SINGLE-STAGE TARGETED EXECUTION =================
@@ -303,6 +315,11 @@ if __name__ == "__main__":
         help="Skip Stage 1.5 transcript extraction in the pipeline",
     )
     parser.add_argument(
+        "--cleanup-segments",
+        action="store_true",
+        help="Delete intermediate .mp4 segments after processing a batch to save disk space",
+    )
+    parser.add_argument(
         "--stage",
         type=str,
         default="all",
@@ -328,4 +345,5 @@ if __name__ == "__main__":
         force=args.force,
         video_batch_size=args.video_batch_size,
         skip_transcript=args.no_transcript,
+        cleanup_segments=args.cleanup_segments,
     )
